@@ -1,0 +1,8 @@
+packages:
+  - .
+allowBuilds:
+  esbuild: true
+overrides:
+  '@modelcontextprotocol/client': 2.3.0
+  undici: 8.12.2
+  zod: 4.6.7

@@ -1,0 +1,72 @@
+{
+  "name": "@corp/dsh-eais",
+  "version": "0.3.0",
+  "private": true,
+  "displayName": "企业模式",
+  "description": "开启EAIS，允许使用企业模型，并可对企业内部数据进行读写操作",
+  "type": "module",
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/types/client.d.ts",
+      "default": "./lib/client.js"
+    }
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-sidebar-right",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-primitives"
+      ]
+    }
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/build-client.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "test": "rm -rf .test-build && tsc -p tsconfig.test.json && node --test --test-force-exit .test-build/test/*.test.js; status=$?; rm -rf .test-build; exit $status",
+    "clean": "rm -rf lib .test-build"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-api-remotes": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-client-connection": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-client-locale": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-client-ui-conversation": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-client-ui-settings": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-client-ui-sidebar-right": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-mcp-client": "0.2.1-rc.3",
+    "@deepseek-ai/schemastery": ">=3.18.4 <4",
+    "react": ">=18",
+    "@deepseek-ai/dsh-client-ui-primitives": "0.2.1-rc.3"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-mcp-client": "0.2.1-rc.3",
+    "@types/node": "^24.0.0",
+    "@deepseek-ai/schemastery": "3.18.5",
+    "@types/react": "19.2.0",
+    "esbuild": "0.25.0",
+    "react": "19.2.0",
+    "typescript": "5.9.3"
+  }
+}

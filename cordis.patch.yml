@@ -1,0 +1,8 @@
+# EAIS host + browser bundle. The package's dsh.client manifest supplies the
+# browser half; this row mounts the host adapter and its settings namespace.
+- insert:
+    - id: eais
+      name: '@corp/dsh-eais'
+      config:
+        serverUrl: http://127.0.0.1:18080
+        serverUrlReadOnly: true
