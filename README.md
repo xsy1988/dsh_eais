@@ -52,8 +52,11 @@ dsh --profile eais --dump-config | grep -A2 "id: eais"
 src/index.ts          host 面入口：登录、模型、MCP、守卫启动
 src/client/           会话卡片、右侧栏、设置页
 src/adapter/          EAIS LLM adapter
-src/guard/            工位清单、租约、工具掩码、收回
+src/guard/            工位清单、租约、工具掩码、收回与安装策略
+skills/               插件创作、数据、UI、签名与验收技能
+templates/            脚手架、静态校验器及趋势/列表/工作台模板
 test/                 单元测试
+integration/          真实 DSH 客户端加载组合测试
 cordis.patch.yml      向 DSH profile 插入 eais 插件行
 ```
 
@@ -77,10 +80,14 @@ cordis.patch.yml      向 DSH profile 插入 eais 插件行
 | `softwareGuard` | `true` | 是否启动内置守卫 |
 | `enforceModelMode` | `true` | 限制非企业模型路由 |
 
+## 员工插件创作
+
+创作会话默认从 `templates/scaffold.mjs` 生成插件，并用 `templates/verify.mjs` 完成包结构、数据访问、UI 状态、滚动和签名哈希检查。模板、固定签名顺序及部署前置条件见 `templates/README.md`；原生视觉规范见 `skills/eais-plugin-ui/SKILL.md`。
+
 ## 与管理端的关系
 
-EAIS 管理端、console BFF 和 Go 服务仍在独立仓库中维护，本仓库不包含任何管理端页面或管理 API。插件只调用 edge 的 `/auth/*`、`/me`、`/llm/*`、`/mcp`、`/software/*`、`/view/*`。
+EAIS 管理端、console BFF 和 Go 服务仍在独立仓库中维护，本仓库不包含任何管理端页面或管理 API。插件只调用 edge 的 `/auth/*`、`/me`、`/llm/*`、`/mcp`、`/software/*`、`/view/*`，员工插件的数据由同源 Host `/eais/data/query` 代理。
 
 ## 版本
 
-当前版本 `0.3.0`。升级插件版本后需要重新构建；DSH 侧替换已安装包后需重启以加载新的 JavaScript 模块。
+当前版本 `0.4.1`。升级插件版本后需要重新构建；DSH 侧替换已安装包后需重启以加载新的 JavaScript 模块。

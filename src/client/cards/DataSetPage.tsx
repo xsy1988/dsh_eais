@@ -50,6 +50,14 @@ export function DataSetPage({
   const [reload, setReload] = useState(0)
   const [selected, setSelected] = useState<Record<string, unknown> | undefined>(undefined)
   const [actionName, setActionName] = useState(title)
+  const [cursor, setCursor] = useState('')
+  const [cursorHistory, setCursorHistory] = useState<string[]>([])
+  const [nextCursor, setNextCursor] = useState('')
+  const [sourceMode, setSourceMode] = useState<'task' | 'cursor'>('task')
+  const [exportJob, setExportJob] = useState('')
+  const [exportState, setExportState] = useState('')
+  const [fileId, setFileId] = useState('')
+  const [exportError, setExportError] = useState('')
   const appliedSignature = useRef('')
 
   const defaults = useMemo(
@@ -84,10 +92,12 @@ export function DataSetPage({
     let cancelled = false
     setLoading(true)
     setError(undefined)
-    api.rows(viewId, { offset, limit: pageSize, sort, desc, filter }, token)
+    api.rows(viewId, { offset, cursor, limit: pageSize, sort, desc, filter }, token)
       .then((page) => {
         if (cancelled) return
         setRows(page.rows ?? [])
+        setNextCursor(page.next_cursor ?? '')
+        setSourceMode(page.source_mode === 'cursor' ? 'cursor' : 'task')
         const nextColumns = (page.columns as CardColumn[] | undefined) ?? []
         if (nextColumns.length > 0) setColumns(nextColumns)
         setTotal(page.total ?? 0)
@@ -103,13 +113,73 @@ export function DataSetPage({
         if (!cancelled) setLoading(false)
       })
     return () => { cancelled = true }
-  }, [api, viewId, offset, pageSize, sort, desc, filter, token, reload])
+  }, [api, viewId, offset, cursor, pageSize, sort, desc, filter, token, reload])
 
   useEffect(() => {
-    if (matched <= 0 || offset < matched) return
+    if (sourceMode === 'cursor' || matched <= 0 || offset < matched) return
     const last = Math.max(0, Math.floor((matched - 1) / pageSize) * pageSize)
     if (last !== offset) setOffset(last)
-  }, [matched, offset, pageSize])
+  }, [matched, offset, pageSize, sourceMode])
+
+  useEffect(() => {
+    setCursor('')
+    setCursorHistory([])
+  }, [pageSize, sort, desc, filter, reload, viewId])
+
+  useEffect(() => {
+    if (!exportJob) return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const poll = async () => {
+      try {
+        const job = await api.job(exportJob)
+        if (cancelled) return
+        setExportState(job.state)
+        setFileId(job.result.file_id ?? '')
+        setExportError(job.result.error ?? '')
+        if (job.state === 'submitted' || job.state === 'running') timer = setTimeout(() => void poll(), 1000)
+      } catch (failure) {
+        if (!cancelled) setExportError(failure instanceof Error ? failure.message : String(failure))
+      }
+    }
+    void poll()
+    return () => { cancelled = true; if (timer) clearTimeout(timer) }
+  }, [api, exportJob])
+
+  const nextPage = () => {
+    if (!nextCursor) return
+    setCursorHistory((current) => [...current, cursor])
+    setCursor(nextCursor)
+    setOffset((current) => current + pageSize)
+  }
+  const previousPage = () => {
+    const previous = cursorHistory[cursorHistory.length - 1]
+    if (previous === undefined) return
+    setCursor(previous)
+    setCursorHistory((current) => current.slice(0, -1))
+    setOffset((current) => Math.max(0, current - pageSize))
+  }
+  const startExport = async () => {
+    setExportError('')
+    setFileId('')
+    try {
+      const job = await api.export(viewId, token)
+      setExportJob(job.job_id)
+      setExportState(job.state)
+    } catch (failure) {
+      setExportError(failure instanceof Error ? failure.message : String(failure))
+    }
+  }
+  const download = async () => {
+    if (!fileId) return
+    const blob = await api.download(fileId)
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `${actionName || 'dataset'}.csv`
+    anchor.click()
+    URL.revokeObjectURL(url)
+  }
 
   const byKey = useMemo(() => new Map(columns.map((column) => [column.key, column])), [columns])
   const ordered = useMemo(
@@ -142,6 +212,10 @@ export function DataSetPage({
     setFilter('')
   }
   const toggleSort = (key: string) => {
+    if (sourceMode === 'cursor') {
+      setError('该接口未声明全局排序下推')
+      return
+    }
     if (sort !== key) {
       setSort(key)
       setDesc(false)
@@ -170,6 +244,15 @@ export function DataSetPage({
       title={name}
       subtitle={subtitle}
       bodyScroll={false}
+      trailing={sourceMode === 'cursor' ? (
+        <>
+          {fileId ? <Button variant="primary" size="sm" onClick={() => { void download().catch((failure: Error) => setExportError(failure.message)) }}>下载 CSV</Button> : (
+            <Button size="sm" disabled={exportState === 'submitted' || exportState === 'running'} onClick={() => void startExport()}>
+              {exportState === 'submitted' || exportState === 'running' ? '正在导出' : '导出'}
+            </Button>
+          )}
+        </>
+      ) : undefined}
       footer={(
         <Pagination
           offset={offset}
@@ -178,6 +261,10 @@ export function DataSetPage({
           total={total}
           onOffsetChange={setOffset}
           onLimitChange={(limit) => { setPageSize(limit); setOffset(0) }}
+          cursorMode={sourceMode === 'cursor'}
+          canNext={Boolean(nextCursor)}
+          onPreviousCursor={previousPage}
+          onNextCursor={nextPage}
         />
       )}
     >
@@ -199,6 +286,7 @@ export function DataSetPage({
         refreshing={loading}
       />
       <div style={{ height: 2, flex: 'none', background: loading ? 'color-mix(in srgb, var(--dsw-alias-state-business-primary) 35%, transparent)' : 'transparent' }} />
+      {exportError ? <p role="alert" style={{ margin: 0, color: 'var(--dsw-alias-state-error-primary)' }}>{exportError}</p> : null}
       {loading && rows.length === 0 && !error ? (
         <div style={{ ...loadingStyle, flex: 'auto' }}>正在读取数据…</div>
       ) : error ? (

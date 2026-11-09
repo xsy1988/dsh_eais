@@ -69,6 +69,6 @@ test('CardApi adds the staff card and maps an error body', async () => {
   assert.equal(calls[0]?.url, 'http://127.0.0.1:18080/views/v_1/rows')
   assert.equal((calls[0]?.init?.headers as Record<string, string>).authorization, 'Bearer card-token')
   assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), {
-    offset: 0, limit: 10, sort: '', desc: false, filter: '',
+    offset: 0, cursor: '', limit: 10, sort: '', desc: false, filter: '',
   })
 })

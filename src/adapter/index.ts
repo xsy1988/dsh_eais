@@ -85,6 +85,7 @@ export class EaisAdapter extends LlmAdapter {
       credentials: 'omit',
       headers: {
         ...attributionHeaders(),
+        ...(options.sessionId === undefined ? {} : { 'X-EAIS-Session-ID': String(options.sessionId) }),
         authorization: `Bearer ${session.token}`,
         'content-type': 'application/json',
         accept: 'text/event-stream',

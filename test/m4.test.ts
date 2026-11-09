@@ -425,6 +425,45 @@ test('SSE keeps usage and refuses a stream that ends without [DONE]', async () =
   assert.equal(error.code, 'E_TIMEOUT')
 })
 
+test('max-tokens truncation drops partial tool calls and finishes normally', async () => {
+  const body = [
+    'data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"m1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"write","arguments":"{\\"path\\":\\"a.js\\",\\"content\\":\\"const x"}}]},"finish_reason":null}]}',
+    '',
+    'data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"m1","choices":[{"index":0,"delta":{},"finish_reason":"length"}]}',
+    '',
+    'data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"m1","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":4096,"total_tokens":4106}}',
+    '',
+    'data: [DONE]',
+    '',
+  ].join('\n')
+
+  const chunks = await collect(readOpenAIStream(sse(body)))
+  assert.ok(chunks.some((chunk) => (chunk as { type?: string }).type === 'tool-call-delta'))
+  assert.equal(chunks.filter((chunk) => {
+    const value = chunk as { type?: string; block?: { type?: string } }
+    return value.type === 'block-end' && value.block?.type === 'tool-call'
+  }).length, 0)
+  const finish = chunks.find((chunk) => (chunk as { type?: string }).type === 'finish') as {
+    reason?: { kind?: string }
+  }
+  assert.equal(finish.reason?.kind, 'max-tokens')
+})
+
+test('tool call fragments ending with stop remain a contract error', async () => {
+  const body = [
+    'data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"m1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"write","arguments":"{}"}}]},"finish_reason":null}]}',
+    '',
+    'data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"m1","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
+    '',
+    'data: [DONE]',
+    '',
+  ].join('\n')
+
+  const error = expectEais(await failureOf(() => collect(readOpenAIStream(sse(body)))))
+  assert.equal(error.code, 'E_CONTRACT')
+  assert.match(error.message, /tool_calls/)
+})
+
 test('abort cancels the stream and surfaces the abort reason', async () => {
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {

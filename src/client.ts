@@ -21,11 +21,15 @@ import {
 } from './port.js'
 import { Settings } from './client/Settings.js'
 import { CardApi } from './client/cards/api.js'
+import { registerEaisData } from './client/data.js'
 import { EaisPane, EaisPaneTitle } from './client/cards/EaisPane.js'
 import { EaisTurnCards } from './client/cards/EaisTurnCards.js'
 import { parseAddress } from './client/cards/parse.js'
+import { PluginApi } from './client/plugins/api.js'
+import { PluginCenter } from './client/plugins/PluginCenter.js'
 
 export interface ClientOptions extends EaisConfig {
+  pluginForge?: boolean
   fetchImpl?: FetchLike
   onLogout?: () => Promise<void>
 }
@@ -82,6 +86,25 @@ export async function registerClient(ctx: ClientContext, options: ClientOptions 
     failures.settings = failure(error, 'E_UI_REGISTER')
   }
 
+  if (resolvedOptions.pluginForge === true && ctx.slots?.register) {
+    try {
+      const pluginApi = new PluginApi({
+        serverUrl: (resolvedOptions.serverUrl ?? 'http://127.0.0.1:18080').replace(/\/$/, ''),
+        fetchImpl: resolvedOptions.fetchImpl,
+        resolveToken: async () => {
+          const resolved = await ctx.remote.credentials.resolve?.(EAIS_TOKEN_REF)
+          return typeof resolved === 'string' ? resolved : resolved?.value
+        },
+      })
+      const register = () => ctx.slots!.register({ name: 'settings.section', id: 'eais-plugins', order: 60, label: '我的插件' },
+        () => createElement(PluginCenter, { api: pluginApi }))
+      const registration = await (ctx.slots.inject ? ctx.slots.inject('settings.section', register) : register())
+      disposables.push(registrationDisposable(registration))
+    } catch (error) {
+      failures.settings = failure(error, 'E_UI_REGISTER')
+    }
+  }
+
   let settings: Awaited<ReturnType<typeof readSettings>> = {}
   try {
     settings = await readSettings(settingsControllerOf(ctx))
@@ -111,14 +134,12 @@ async function registerExecutionUI(
   failures: ClientRegistration['failures'],
 ): Promise<void> {
   const serverUrl = (options.serverUrl ?? 'http://127.0.0.1:18080').replace(/\/$/, '')
-  const api = new CardApi({
-    serverUrl,
-    fetchImpl: options.fetchImpl,
-    resolveToken: async () => {
-      const resolved = await ctx.remote.credentials.resolve?.(EAIS_TOKEN_REF)
-      return typeof resolved === 'string' ? resolved : resolved?.value
-    },
-  })
+  const resolveToken = async () => {
+    const resolved = await ctx.remote.credentials.resolve?.(EAIS_TOKEN_REF)
+    return typeof resolved === 'string' ? resolved : resolved?.value
+  }
+  registerEaisData(ctx, { fetchImpl: options.fetchImpl })
+  const api = new CardApi({ serverUrl, fetchImpl: options.fetchImpl, resolveToken })
   const openResource = async (address: string, openOptions?: { params?: Record<string, unknown> }): Promise<void> => {
     const service = ctx.sidebarRight
     if (service?.openResource) {

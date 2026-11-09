@@ -117,8 +117,12 @@ export interface HostContext {
     getSelection?(): { provider?: string; model?: string } | undefined | Promise<{ provider?: string; model?: string } | undefined>
     saveSelection(selection: { provider: string; model: string }): void | Promise<void>
   }
+  commands?: {
+    register(definition: unknown): unknown
+  }
   get?<T = unknown>(name: string): T | undefined
   plugin(plugin: unknown, config: unknown): unknown
+  inject?(services: string[], callback: (ctx: HostContext) => unknown): unknown
   on(event: string, listener: (...args: unknown[]) => void): unknown
 }
 
@@ -169,7 +173,7 @@ export interface ClientContext {
       register?(definition: unknown): unknown
     }
   }
-  on?(event: string, listener: (event?: unknown) => unknown): unknown
+  on?(event: string, listener: (...args: any[]) => unknown): unknown
 }
 
 export function isDisposable(value: unknown): value is Disposable {

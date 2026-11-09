@@ -9,12 +9,17 @@ export interface PaginationProps {
   total: number
   onOffsetChange: (offset: number) => void
   onLimitChange: (limit: number) => void
+  cursorMode?: boolean
+  canNext?: boolean
+  onPreviousCursor?: () => void
+  onNextCursor?: () => void
 }
 
 const PAGE_SIZES = [20, 50, 100]
 
 export function Pagination({
   offset, limit, matched, total, onOffsetChange, onLimitChange,
+  cursorMode = false, canNext = false, onPreviousCursor, onNextCursor,
 }: PaginationProps) {
   const pageCount = Math.max(1, Math.ceil(matched / Math.max(1, limit)))
   const current = Math.min(pageCount, Math.floor(offset / Math.max(1, limit)) + 1)
@@ -56,76 +61,34 @@ export function Pagination({
         >
           {sizes.map((size) => <option key={size} value={size}>{size} 条/页</option>)}
         </select>
-        <Button
-          variant="ghost"
-          size="sm"
-          style={pageButtonStyle}
-          aria-label="首页"
-          disabled={current <= 1}
-          onClick={() => go(1)}
-        >
-          «
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          style={pageButtonStyle}
-          aria-label="上一页"
-          disabled={current <= 1}
-          onClick={() => go(current - 1)}
-        >
-          <IconChevronLeft size={14} />
-        </Button>
-        {pageWindow(current, pageCount).map((token, index) => token === 'ellipsis' ? (
-          <span key={`e-${index}`} style={ellipsisStyle}>…</span>
+        {cursorMode ? (
+          <>
+            <Button variant="ghost" size="sm" aria-label="上一页" disabled={offset <= 0} onClick={onPreviousCursor}>
+              <IconChevronLeft size={14} />
+            </Button>
+            <span style={jumpLabelStyle}>第 {Math.floor(offset / Math.max(1, limit)) + 1} 页</span>
+            <Button variant="ghost" size="sm" aria-label="下一页" disabled={!canNext} onClick={onNextCursor}>
+              <IconChevronRight size={14} />
+            </Button>
+          </>
         ) : (
-          <button
-            key={token}
-            type="button"
-            aria-label={`第 ${token} 页`}
-            aria-current={token === current ? 'page' : undefined}
-            onClick={() => go(token)}
-            style={{
-              ...pageNumberStyle,
-              ...(token === current ? activePageStyle : {}),
-            }}
-          >
-            {token}
-          </button>
-        ))}
-        <Button
-          variant="ghost"
-          size="sm"
-          style={pageButtonStyle}
-          aria-label="下一页"
-          disabled={current >= pageCount}
-          onClick={() => go(current + 1)}
-        >
-          <IconChevronRight size={14} />
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          style={pageButtonStyle}
-          aria-label="末页"
-          disabled={current >= pageCount}
-          onClick={() => go(pageCount)}
-        >
-          »
-        </Button>
-        <span style={jumpStyle}>
-          <span style={jumpLabelStyle}>跳至</span>
-          <input
-            aria-label="跳至页码"
-            value={jump}
-            inputMode="numeric"
-            onChange={(event) => setJump(event.target.value.replace(/[^0-9]/g, ''))}
-            onKeyDown={(event) => { if (event.key === 'Enter') commitJump() }}
-            onBlur={commitJump}
-            style={jumpInputStyle}
-          />
-          <span style={jumpLabelStyle}>页</span>
-        </span>
+          <>
+            <Button variant="ghost" size="sm" style={pageButtonStyle} aria-label="首页" disabled={current <= 1} onClick={() => go(1)}>«</Button>
+            <Button variant="ghost" size="sm" style={pageButtonStyle} aria-label="上一页" disabled={current <= 1} onClick={() => go(current - 1)}><IconChevronLeft size={14} /></Button>
+            {pageWindow(current, pageCount).map((token, index) => token === 'ellipsis' ? (
+              <span key={`e-${index}`} style={ellipsisStyle}>…</span>
+            ) : (
+              <button key={token} type="button" aria-label={`第 ${token} 页`} aria-current={token === current ? 'page' : undefined} onClick={() => go(token)} style={{ ...pageNumberStyle, ...(token === current ? activePageStyle : {}) }}>{token}</button>
+            ))}
+            <Button variant="ghost" size="sm" style={pageButtonStyle} aria-label="下一页" disabled={current >= pageCount} onClick={() => go(current + 1)}><IconChevronRight size={14} /></Button>
+            <Button variant="ghost" size="sm" style={pageButtonStyle} aria-label="末页" disabled={current >= pageCount} onClick={() => go(pageCount)}>»</Button>
+            <span style={jumpStyle}>
+              <span style={jumpLabelStyle}>跳至</span>
+              <input aria-label="跳至页码" value={jump} inputMode="numeric" onChange={(event) => setJump(event.target.value.replace(/[^0-9]/g, ''))} onKeyDown={(event) => { if (event.key === 'Enter') commitJump() }} onBlur={commitJump} style={jumpInputStyle} />
+              <span style={jumpLabelStyle}>页</span>
+            </span>
+          </>
+        )}
       </div>
     </div>
   )

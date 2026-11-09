@@ -1,4 +1,5 @@
 import type { GuardContext, GuardOptions } from './index.js'
+import type { ForgeSessionController } from './forge-session.js'
 
 export interface ToolPolicy {
   revision?: string
@@ -36,6 +37,7 @@ interface AgentBinding {
   fiber: AgentFiber
   disposer?: () => void
   signature: string
+  allNames: string[]
 }
 
 interface AgentContext {
@@ -44,6 +46,7 @@ interface AgentContext {
 
 interface Agent {
   ctx: AgentContext
+  session?: { id: unknown }
 }
 
 interface FilterPayload {
@@ -64,6 +67,8 @@ export class ToolPolicyController {
   private stopped = false
   private pending?: Promise<void>
   private policy?: ToolPolicy
+  private forge?: ForgeSessionController
+  private readonly forgePolicies = new Map<string, ToolPolicy>()
   private reconnectMarker = ''
   private readonly bindings = new Map<Agent, AgentBinding>()
   private readonly listeners: Array<() => unknown> = []
@@ -75,6 +80,11 @@ export class ToolPolicyController {
     this.serverUrl = (options.serverUrl ?? config.serverUrl ?? 'http://127.0.0.1:18080').replace(/\/+$/, '')
     this.fetchImpl = options.fetchImpl ?? fetch
     this.intervalMs = options.intervalMs ?? 60_000
+  }
+
+  setForgeController(forge: ForgeSessionController): void {
+    this.forge = forge
+    forge.onChange(() => { void this.refresh() })
   }
 
   async start(): Promise<void> {
@@ -140,9 +150,10 @@ export class ToolPolicyController {
 
   private attach(agent: Agent): void {
     if (this.bindings.has(agent)) return
-    const binding: AgentBinding = { ctx: undefined as unknown as ToolRegistry, fiber: undefined as unknown as AgentFiber, signature: '' }
+    const binding: AgentBinding = { ctx: undefined as unknown as ToolRegistry, fiber: undefined as unknown as AgentFiber, signature: '', allNames: [] }
     const fiber = agent.ctx.inject(['tools'], (runtimeCtx) => {
       binding.ctx = runtimeCtx.tools
+      binding.allNames = this.names(binding)
       this.bindings.set(agent, binding)
       this.applyToAgent(agent)
       // The first refresh needs the agent's registry, which only exists now.
@@ -188,11 +199,18 @@ export class ToolPolicyController {
     }
   }
 
+  private availableNames(binding: AgentBinding): string[] {
+    const names = new Set(binding.allNames)
+    for (const name of this.names(binding)) names.add(name)
+    binding.allNames = [...names].sort()
+    return binding.allNames
+  }
+
   /** Union of every tool name the attached agents can see. */
   private visibleNames(): string[] {
     const names = new Set<string>()
     for (const binding of this.bindings.values()) {
-      for (const name of this.names(binding)) names.add(name)
+      for (const name of this.availableNames(binding)) names.add(name)
     }
     return [...names].sort()
   }
@@ -200,25 +218,22 @@ export class ToolPolicyController {
   private applyToAgent(agent: Agent): void {
     const binding = this.bindings.get(agent)
     if (!binding) return
-    const names = this.names(binding)
-    const allowed = this.policy?.allowed
-    const signature = JSON.stringify([allowed ?? null, names, this.reconnectMarker])
+    const sessionID = String(agent.session?.id ?? '')
+    const forging = this.forge?.isForge(sessionID) === true
+    const policy = forging ? this.forgePolicies.get(sessionID) : this.policy
+    const names = this.availableNames(binding)
+    const allowed = policy?.allowed
+    const signature = JSON.stringify([allowed ?? null, names, this.reconnectMarker, forging])
     if (signature === binding.signature) return
     binding.signature = signature
-    // `schemas()` without a scope resolves the global layer only, and this
-    // plugin cannot reach the agent's scope key: preset and own-scope tools
-    // never appear here. An `allow` mask built from that partial view would
-    // hide every tool an agent preset registers, so the mask is stated as
-    // `deny` instead — only names this controller can actually see can be
-    // removed, and everything else is left for the request-layer policy.
     const permitted = new Set(allowed ?? [])
-    const blocked = names.filter((name) => !permitted.has(name))
+    const blocked = names.filter((name) => name !== 'run_code' && !permitted.has(name))
     binding.disposer?.()
-    binding.disposer = this.policy ? binding.ctx.restrict({ deny: blocked }) : undefined
-    console.info('[eais] guard tool policy applied', { allowed: permitted.size, deny: blocked.length })
+    binding.disposer = policy ? binding.ctx.restrict({ deny: blocked }) : undefined
+    console.info('[eais] guard tool policy applied', { allowed: permitted.size, deny: blocked.length, forge: forging })
   }
 
-  private async fetchPolicy(names: string[], token: string): Promise<ToolPolicy | undefined> {
+  private async fetchPolicy(names: string[], token: string, sessionID = ''): Promise<ToolPolicy | undefined> {
     const response = await this.fetchImpl(`${this.serverUrl}/software/tool-filter`, {
       method: 'POST',
       headers: {
@@ -226,7 +241,7 @@ export class ToolPolicyController {
         'content-type': 'application/json',
         accept: 'application/json',
       },
-      body: JSON.stringify({ names }),
+      body: JSON.stringify({ names, session_id: sessionID }),
     })
     if (!response.ok) return undefined
     const payload = (await response.json()) as FilterPayload
@@ -277,14 +292,24 @@ export class ToolPolicyController {
     }
     this.reconnectMarker = await this.readReconnectMarker()
     for (const agent of this.bindings.keys()) {
+      const sessionID = String(agent.session?.id ?? '')
+      if (token && this.forge?.isForge(sessionID)) {
+        try {
+          const binding = this.bindings.get(agent)
+          const agentNames = binding ? this.availableNames(binding) : names
+          const policy = await this.fetchPolicy(agentNames, token, sessionID)
+          if (policy) this.forgePolicies.set(sessionID, policy)
+        } catch {
+          const previous = this.forgePolicies.get(sessionID)
+          if (previous) this.forgePolicies.set(sessionID, { ...previous, source: 'stale' })
+        }
+      } else {
+        this.forgePolicies.delete(sessionID)
+      }
       try {
         this.applyToAgent(agent)
-      } catch {
-        try {
-          this.detach(agent)
-        } catch {
-          this.bindings.delete(agent)
-        }
+      } catch (error) {
+        console.error('[eais] guard tool policy failed closed check required', error)
       }
     }
     void this.reportRegistryStatus(token)

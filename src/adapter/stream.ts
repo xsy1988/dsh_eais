@@ -80,23 +80,26 @@ export class OpenAIStreamAssembler {
     if (!this.done || !this.finishReason) {
       throw new EaisError('E_TIMEOUT', '模型流在结束标记前中断')
     }
-    if (this.tools.size && this.finishReason !== 'tool_calls') {
+    const truncated = this.finishReason === 'length'
+    if (this.tools.size && !truncated && this.finishReason !== 'tool_calls') {
       throw new EaisError('E_CONTRACT', '工具调用未以 tool_calls 结束')
     }
     const blocks: Array<{ index: number; block: ContentBlock }> = []
     if (this.reasoning) blocks.push({ index: this.reasoning.index, block: { type: 'reasoning', text: this.reasoning.text } })
     if (this.text) blocks.push({ index: this.text.index, block: { type: 'text', text: this.text.text } })
-    for (const tool of this.tools.values()) {
-      if (!tool.name) throw new EaisError('E_CONTRACT', '工具调用缺少名称')
-      try {
-        JSON.parse(tool.arguments || '{}')
-      } catch {
-        throw new EaisError('E_CONTRACT', `工具调用 ${tool.name} 的参数不完整`)
+    if (!truncated) {
+      for (const tool of this.tools.values()) {
+        if (!tool.name) throw new EaisError('E_CONTRACT', '工具调用缺少名称')
+        try {
+          JSON.parse(tool.arguments || '{}')
+        } catch {
+          throw new EaisError('E_CONTRACT', `工具调用 ${tool.name} 的参数不完整`)
+        }
+        blocks.push({
+          index: tool.index,
+          block: { type: 'tool-call', id: tool.id, name: tool.name, arguments: tool.arguments || '{}' },
+        })
       }
-      blocks.push({
-        index: tool.index,
-        block: { type: 'tool-call', id: tool.id, name: tool.name, arguments: tool.arguments || '{}' },
-      })
     }
     const chunks = blocks.sort((a, b) => a.index - b.index)
       .map(({ index, block }) => this.endBlock(index, block))

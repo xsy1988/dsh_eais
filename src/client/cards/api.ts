@@ -20,6 +20,7 @@ export interface CardApiOptions {
 
 export interface RowsQuery {
   offset?: number
+  cursor?: string
   limit?: number
   sort?: string
   desc?: boolean
@@ -35,9 +36,23 @@ export interface RowsPage {
   offset: number
   limit: number
   complete: boolean
+  page_complete?: boolean
+  dataset_complete?: boolean
+  total_known?: boolean
+  source_mode?: 'task' | 'cursor'
+  next_cursor?: string
   action?: string
   action_name?: string
   title?: string
+}
+
+export interface ExportJob {
+  job_id: string
+  state: string
+}
+
+export interface JobStatus extends ExportJob {
+  result: { file_id?: string, rows?: number, sha256?: string, error?: string }
 }
 
 export interface ConfirmDraft {
@@ -68,11 +83,32 @@ export class CardApi {
   async rows(viewId: string, query: RowsQuery = {}, token?: string): Promise<RowsPage> {
     return this.request<RowsPage>('POST', `/views/${encodeURIComponent(viewId)}/rows`, {
       offset: query.offset ?? 0,
+      cursor: query.cursor ?? '',
       limit: query.limit ?? 50,
       sort: query.sort ?? '',
       desc: query.desc === true,
       filter: query.filter ?? '',
     }, token)
+  }
+
+  async export(viewId: string, token?: string): Promise<ExportJob> {
+    return this.request<ExportJob>('POST', `/views/${encodeURIComponent(viewId)}/export`, {}, token)
+  }
+
+  async job(jobId: string): Promise<JobStatus> {
+    return this.request<JobStatus>('GET', `/jobs/${encodeURIComponent(jobId)}`)
+  }
+
+  async download(fileId: string): Promise<Blob> {
+    const token = await this.resolveToken()
+    if (!token) throw new CardApiError('E_CARD_TOKEN', '员工卡不可用，请重新登录', 401)
+    const response = await this.fetchImpl(this.base + `/files/${encodeURIComponent(fileId)}`, {
+      headers: { authorization: `Bearer ${token}` },
+    })
+    if (!response.ok) {
+      throw new CardApiError('E_DOWNLOAD', `下载失败（HTTP ${response.status}）`, response.status)
+    }
+    return response.blob()
   }
 
   async confirmation(confirmId: string, token?: string): Promise<ConfirmDraft> {

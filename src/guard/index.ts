@@ -1,6 +1,9 @@
 import { fileURLToPath } from 'node:url'
 import { readManifest, resolvePackageRoot, type PackageManifest } from './manifest.js'
 import { ToolPolicyController } from './tools.js'
+import { ForgeSessionController } from './forge-session.js'
+import { InstallPolicy } from './install-policy.js'
+import type { EaisRuntimeSession } from '../adapter/index.js'
 
 const TOKEN_REF = 'EAIS_TOKEN'
 const SETTINGS_NAMESPACE = 'eais'
@@ -21,6 +24,8 @@ export interface GuardOptions {
   packagePaths?: Record<string, string>
   packageRoot?: string
   fetchImpl?: typeof fetch
+  pluginForge?: boolean
+  readSession?: () => EaisRuntimeSession | undefined
 }
 
 interface EaisSettings {
@@ -44,8 +49,9 @@ export interface GuardContext {
     resolve(ref: string): Credential | string | undefined | Promise<Credential | string | undefined>
   }
   settingsController?: SettingsController
+  commands?: { register(definition: unknown): unknown }
   get?<T = unknown>(name: string): T | undefined
-  on?(event: string, listener: (payload: any) => unknown): unknown
+  on?(event: string, listener: (...args: any[]) => unknown): unknown
 }
 
 interface ReportItem {
@@ -84,6 +90,10 @@ class Guard {
   private persistEnabled = true
   private readonly toolPolicy: ToolPolicyController
   private readonly fetchImpl: typeof fetch
+  private readonly forge?: ForgeSessionController
+  private readonly installPolicy?: InstallPolicy
+  private stopForge?: () => void
+  private stopInstall?: () => void
 
   constructor(
     private readonly ctx: GuardContext,
@@ -92,9 +102,18 @@ class Guard {
     this.state = { phase: 'starting', deviceId: config.deviceName ?? '' }
     this.toolPolicy = new ToolPolicyController(ctx, config, { fetchImpl: config.fetchImpl })
     this.fetchImpl = config.fetchImpl ?? fetch
+    if (config.pluginForge === true && config.readSession) {
+      this.forge = new ForgeSessionController(ctx, {
+        serverUrl: config.serverUrl, fetchImpl: config.fetchImpl, readSession: config.readSession,
+      })
+      this.installPolicy = new InstallPolicy(ctx, this.forge)
+      this.toolPolicy.setForgeController(this.forge)
+    }
   }
 
   async start(): Promise<void> {
+    this.stopForge = this.forge?.start()
+    this.stopInstall = this.installPolicy?.start()
     const policy = this.toolPolicy.start()
     await this.restore()
     await policy
@@ -104,6 +123,8 @@ class Guard {
   stop(): void {
     if (this.stopped) return
     this.stopped = true
+    this.stopInstall?.()
+    this.stopForge?.()
     this.toolPolicy.stop()
     if (this.timer !== undefined) clearTimeout(this.timer)
     this.timer = undefined

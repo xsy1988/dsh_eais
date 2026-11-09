@@ -1,0 +1,4 @@
+- insert:
+    - id: __PANEL__
+      name: '__PACKAGE__'
+      config: {}

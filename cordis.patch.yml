@@ -6,3 +6,4 @@
       config:
         serverUrl: http://127.0.0.1:18080
         serverUrlReadOnly: true
+        pluginForge: true

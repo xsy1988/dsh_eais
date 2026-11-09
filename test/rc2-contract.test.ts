@@ -91,6 +91,103 @@ test('host apply returns a Cordis disposer and uses currentSelection', async () 
   await disposer()
 })
 
+test('host apply waits for the EAIS adapter before returning', async () => {
+  let resolveFetch!: (response: Response) => void
+  const responseGate = new Promise<Response>((resolve) => { resolveFetch = resolve })
+  let registered = 0
+  const ctx = {
+    credentials: { resolve: async () => ({ value: 'token' }) },
+    settingsController: new DescribeSettings(),
+    llm: {
+      registerAdapter: () => {
+        registered += 1
+        return Object.assign(() => undefined, { replace: () => undefined })
+      },
+    },
+    agentDefaultModel: {
+      currentSelection: () => ({ provider: 'eais', model: 'm1' }),
+      saveSelection: async () => undefined,
+    },
+    on: () => ({ dispose: () => undefined }),
+  }
+  const applying = applyHost(ctx as never, {
+    serverUrl: SERVER,
+    fetchImpl: (async () => responseGate) as never,
+    softwareGuard: false,
+    enforceModelMode: false,
+  })
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  assert.equal(registered, 0)
+  resolveFetch(new Response(JSON.stringify(me()), { status: 200 }))
+  const disposer = await applying
+  assert.equal(registered, 1)
+  await disposer()
+})
+
+test('host apply registers the adapter when publishing state fails', async () => {
+  class FailingUpdateSettings extends DescribeSettings {
+    override async update(): Promise<never> {
+      throw new Error('settings write rejected')
+    }
+  }
+  let registered = 0
+  const ctx = {
+    credentials: { resolve: async () => ({ value: 'token' }) },
+    settingsController: new FailingUpdateSettings(),
+    llm: {
+      registerAdapter: () => {
+        registered += 1
+        return Object.assign(() => undefined, { replace: () => undefined })
+      },
+    },
+    agentDefaultModel: {
+      currentSelection: () => ({ provider: 'eais', model: 'm1' }),
+      saveSelection: async () => undefined,
+    },
+    on: () => ({ dispose: () => undefined }),
+  }
+  const disposer = await applyHost(ctx as never, {
+    serverUrl: SERVER,
+    fetchImpl: (async () => new Response(JSON.stringify(me()), { status: 200 })) as never,
+    softwareGuard: false,
+    enforceModelMode: false,
+  })
+  assert.equal(registered, 1)
+  await disposer()
+})
+
+test('host apply does not wait for MCP mounting before returning', async () => {
+  let resolvePlugin!: (value: unknown) => void
+  const pluginGate = new Promise((resolve) => { resolvePlugin = resolve })
+  let registered = 0
+  const ctx = {
+    credentials: { resolve: async () => ({ value: 'token' }) },
+    settingsController: new DescribeSettings(),
+    llm: {
+      registerAdapter: () => {
+        registered += 1
+        return Object.assign(() => undefined, { replace: () => undefined })
+      },
+    },
+    agentDefaultModel: {
+      currentSelection: () => ({ provider: 'eais', model: 'm1' }),
+      saveSelection: async () => undefined,
+    },
+    on: () => ({ dispose: () => undefined }),
+    plugin: () => pluginGate,
+  }
+  const meWithMcp = { ...me(), mcp: { url: `${SERVER}/mcp`, serverName: 'eais' } }
+  const disposer = await applyHost(ctx as never, {
+    serverUrl: SERVER,
+    fetchImpl: (async () => new Response(JSON.stringify(meWithMcp), { status: 200 })) as never,
+    softwareGuard: false,
+    enforceModelMode: false,
+  })
+  assert.equal(registered, 1)
+  resolvePlugin({ dispose: () => undefined })
+  await disposer()
+})
+
 test('client apply returns a Cordis disposer and registers through slots.inject', async () => {
   const registrations: unknown[] = []
   const ctx = {
