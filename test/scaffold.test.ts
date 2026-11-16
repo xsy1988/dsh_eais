@@ -96,7 +96,28 @@ test('verify rejects forbidden data access and signed content drift', () => {
     writeFileSync(join(root, 'package.json'), JSON.stringify(pkg))
     const upgraded = run(verifyTool, [root])
     assert.equal(upgraded.status, 0, JSON.stringify(upgraded.output))
-    assert.match(upgraded.output.next, /plugin_check/)
+    assert.match(upgraded.output.next, /plugin_submit/)
+  } finally {
+    rmSync(parent, { recursive: true, force: true })
+  }
+})
+
+test('finalize applies the platform identity before signing and keeps preview unsigned', () => {
+  const parent = mkdtempSync(join(tmpdir(), 'eais-finalize-'))
+  try {
+    const root = generate('list', parent)
+    const before = readManifest(root, '@local/list-test', ['lib', 'index.js', 'locale', 'icon.svg'])
+    const previewHash = readFileSync(join(root, 'preview.html'), 'utf8')
+    const finalized = run(resolve('templates/finalize.mjs'), [
+      '--target', root, '--package', '@eais/e1001.customer-watch', '--panel', 'eais-e1001-customer-watch', '--label', '客户看板',
+    ])
+    assert.equal(finalized.status, 0, JSON.stringify(finalized.output))
+    const verified = run(verifyTool, [root])
+    assert.equal(verified.status, 0, JSON.stringify(verified.output))
+    assert.equal(verified.output.manifest.package_name, '@eais/e1001.customer-watch')
+    assert.notEqual(verified.output.manifest.content_hash, before.contentHash)
+    assert.equal(readFileSync(join(root, 'preview.html'), 'utf8'), previewHash)
+    assert.ok(!readFileSync(join(root, 'lib/client.js'), 'utf8').includes('@local/list-test'))
   } finally {
     rmSync(parent, { recursive: true, force: true })
   }

@@ -29,7 +29,7 @@ node templates/scaffold.mjs \
 node templates/verify.mjs /absolute/workspace/sales-trend
 ```
 
-成功输出中的 `manifest` 可直接作为 `plugin_check` 参数；新建插件不传 `plugin_no`，已有插件传原插件号。`plugin_check` 返回的 `manifest` 原样写入插件根目录 `.eais-plugin.json`，不要手工删字段或重新拼签名。
+成功输出中的 `manifest` 连同 `display_name`、`slug`、`preview_path` 传给 `plugin_check` 做只读预检；此时不发号、不签名。员工确认假数据预览和名称后，用 `finalize.mjs` 写入候选正式名与稳定面板 ID，重新 verify，再调用 `plugin_submit`。新建插件不传 `plugin_no`，已有插件传原插件号。`plugin_submit` 返回的 `manifest` 原样写入插件根目录 `.eais-plugin.json`，不要手工删字段或重新拼签名。
 
 写入签名后再次运行 `verify`。只有第二次也通过，才能调用一次：
 
@@ -37,7 +37,7 @@ node templates/verify.mjs /absolute/workspace/sales-trend
 plugin_manager install_bundle(target=/absolute/workspace/sales-trend)
 ```
 
-安装是新创作流程的最后一个动作。签名后不能再改文件；任何改动都必须升级 `package.json` 的 `version`，重新执行 `verify → plugin_check → 写 manifest → verify → install_bundle`。若同包旧版已经安装，必须在新版重签并通过二次 verify 后，先 `remove_bundle` 移除旧安装记录，再对新版执行一次 `install_bundle`；不要删除源码或直接覆盖同版本。
+`preview.html` 由脚手架一并生成，只使用假数据，不联网、不参与签名哈希。安装是新创作流程的最后一个动作。签名后不能再改文件；任何改动都必须升级 `package.json` 的 `version`，重新执行 `verify → plugin_submit → 写 manifest → verify → install_bundle`。若同包旧版已经安装，必须在新版重签并通过二次 verify 后，先 `remove_bundle` 移除旧安装记录，再对新版执行一次 `install_bundle`；不要删除源码或直接覆盖同版本。
 
 `verify` 覆盖：包结构和导出、动作声明、JavaScript 语法、虚拟数据服务、禁止直连和读取凭据、digest 处理、加载/空/错误状态、过期响应保护、根节点滚动、签名哈希和版本一致性。它不能代替真实页面的业务与视觉验收。
 

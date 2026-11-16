@@ -116,3 +116,72 @@ test('controller survives an inactive settings context during plugin reload', as
   await assert.doesNotReject(controller.refresh())
   controller.stop()
 })
+
+test('unloaded scoped tools cannot break mask replacement', async () => {
+  const calls: Array<{ allow?: string[]; deny?: string[] }> = []
+  const disposals: number[] = []
+  const listeners = new Map<string, (payload: any) => unknown>()
+  const registry = {
+    restrict(filter: { allow?: string[]; deny?: string[] }) {
+      calls.push(filter)
+      if (calls.length === 1) throw new Error('tools.restrict() names unknown global tool "mcp__eais__plugin_submit"; known global tools: read')
+      return () => disposals.push(1)
+    },
+    schemas: () => [{ name: 'read' }, { name: 'mcp__eais__plugin_submit' }],
+  }
+  const agent = {
+    session: { id: 'session-unload' },
+    ctx: { inject: (_names: string[], callback: (ctx: { tools: typeof registry }) => void) => {
+      callback({ tools: registry })
+      return { dispose: () => disposals.push(0) }
+    } },
+  }
+  const controller = new ToolPolicyController({
+    credentials: { resolve: () => 'token' },
+    on: (event, listener) => listeners.set(event, listener),
+  }, {}, {
+    fetchImpl: async () => new Response(JSON.stringify({ allowedTools: ['read'] }), { status: 200 }),
+    intervalMs: 60_000,
+  })
+  await controller.start()
+  listeners.get('agent/created')?.({ agent })
+  await controller.refresh()
+  assert.equal(calls.length, 2)
+  assert.deepEqual(calls[1]!.deny, [])
+  assert.equal(disposals.length, 0, 'the previous mask must survive until replacement succeeds')
+  controller.stop()
+})
+
+test('new mask is created before the previous mask is disposed', async () => {
+  const events: string[] = []
+  const listeners = new Map<string, (payload: any) => unknown>()
+  let visible = ['read', 'bash']
+  const registry = {
+    restrict(filter: { deny?: string[] }) {
+      events.push('create:' + (filter.deny ?? []).join(','))
+      return () => events.push('dispose')
+    },
+    schemas: () => visible.map(name => ({ name })),
+  }
+  const agent = {
+    session: { id: 'session-order' },
+    ctx: { inject: (_names: string[], callback: (ctx: { tools: typeof registry }) => void) => {
+      callback({ tools: registry })
+      return { dispose: () => undefined }
+    } },
+  }
+  const controller = new ToolPolicyController({
+    credentials: { resolve: () => 'token' },
+    on: (event, listener) => listeners.set(event, listener),
+  }, {}, {
+    fetchImpl: async () => new Response(JSON.stringify({ allowedTools: ['read'] }), { status: 200 }),
+    intervalMs: 60_000,
+  })
+  await controller.start()
+  listeners.get('agent/created')?.({ agent })
+  await controller.refresh()
+  visible = ['read', 'bash', 'glob']
+  await controller.refresh()
+  assert.ok(events.indexOf('create:bash,glob') < events.indexOf('dispose'))
+  controller.stop()
+})

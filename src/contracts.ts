@@ -30,6 +30,15 @@ export interface EaisModel {
   reasoning: false | string[]
 }
 
+export interface EaisAttachmentCapability {
+  enabled: true
+  types: string[]
+  maxFileBytes: number
+  maxUnits: number
+  maxMessageAttachments: number
+  maxSliceChars: number
+}
+
 export interface EaisMe {
   apiVersion: '1'
   staff: EaisStaff
@@ -41,6 +50,7 @@ export interface EaisMe {
     baseURL: string
     models: EaisModel[]
   }
+  attachments?: EaisAttachmentCapability
   mcp?: {
     url: string
     serverName: 'eais'
@@ -99,6 +109,7 @@ export interface EaisSettings {
   guardState?: unknown
   /** Last tool policy accepted from the server, kept for offline masking. */
   guardToolPolicy?: unknown
+  pluginSources?: Record<string, string>
 }
 
 export interface EaisConfig {

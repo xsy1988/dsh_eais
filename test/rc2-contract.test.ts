@@ -205,6 +205,6 @@ test('client apply returns a Cordis disposer and registers through slots.inject'
   }
   const disposer = await applyClient(ctx as never)
   assert.equal(typeof disposer, 'function')
-  assert.equal(registrations.length, 4)
+  assert.equal(registrations.length, 8)
   await disposer()
 })

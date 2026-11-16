@@ -1,7 +1,13 @@
 export interface EmployeePlugin {
   pluginNo: string
   ownerStaffNo: string
+  authorStaffNo: string
+  relation?: 'mine' | 'maintainer' | 'shared'
+  installed: boolean
   packageName: string
+  displayName: string
+  panelId: string
+  successorStaffNo?: string
   status: 'trial' | 'private' | 'online' | 'offline'
   trialStartedAt: string
   trialExpiresAt: string
@@ -24,43 +30,56 @@ export interface PluginEvent {
 
 export interface PluginApiOptions {
   serverUrl: string
-  resolveToken: () => Promise<string | undefined>
   fetchImpl?: typeof fetch
 }
 
 export class PluginApi {
-  private readonly base: string
-  constructor(private readonly options: PluginApiOptions) {
-    this.base = options.serverUrl.replace(/\/+$/, '')
-  }
+  constructor(private readonly options: PluginApiOptions) {}
 
   async list(): Promise<EmployeePlugin[]> {
-    const result = await this.request<{ items: EmployeePlugin[] }>('/plugins/mine')
+    const result = await this.request<{ items: EmployeePlugin[] }>('/eais/plugins/mine')
     return result.items ?? []
   }
 
   async events(pluginNo: string): Promise<PluginEvent[]> {
-    const result = await this.request<{ items: PluginEvent[] }>(`/plugins/${encodeURIComponent(pluginNo)}/events`)
+    const result = await this.request<{ items: PluginEvent[] }>(`/eais/plugins/events?pluginNo=${encodeURIComponent(pluginNo)}`)
     return result.items ?? []
   }
 
-  async action(pluginNo: string, action: string, version = '', reason = ''): Promise<EmployeePlugin> {
-    return this.request(`/plugins/${encodeURIComponent(pluginNo)}/action`, { action, version, reason })
+  async action(pluginNo: string, action: string, version = '', reason = '', displayName = ''): Promise<EmployeePlugin> {
+    return this.request('/eais/plugins/action', { pluginNo, action, version, reason, display_name: displayName })
   }
 
   private async request<T>(path: string, body?: Record<string, unknown>): Promise<T> {
-    const token = await this.options.resolveToken()
-    if (!token) throw new Error('请先登录 EAIS')
-    const response = await (this.options.fetchImpl ?? fetch)(this.base + path, {
+    const response = await (this.options.fetchImpl ?? fetch)(path, {
       method: body ? 'POST' : 'GET',
-      headers: {
-        authorization: `Bearer ${token}`, accept: 'application/json',
-        ...(body ? { 'content-type': 'application/json' } : {}),
-      },
-      ...(body ? { body: JSON.stringify({ staff_no: '', ...body }) } : {}),
+      headers: { accept: 'application/json', ...(body ? { 'content-type': 'application/json' } : {}) },
+      ...(body ? { body: JSON.stringify(body) } : {}),
     })
     const payload = await response.json().catch(() => undefined) as { error?: { message?: string } } | undefined
     if (!response.ok) throw new Error(payload?.error?.message ?? `请求失败（HTTP ${response.status}）`)
+    return payload as T
+  }
+}
+
+export class PluginArtifactApi {
+  constructor(private readonly fetchImpl: typeof fetch = fetch) {}
+
+  async publish(pluginNo: string, successorStaffNo: string): Promise<void> {
+    await this.request('/eais/plugins/publish', { pluginNo, successorStaffNo })
+  }
+
+  async install(pluginNo: string, version: string): Promise<void> {
+    const result = await this.request<{ application?: string }>('/eais/plugins/install', { pluginNo, version })
+    if (result.application === 'restart-required') throw new Error('安装已保存，重启 DSH 后即可打开')
+  }
+
+  private async request<T>(path: string, body: Record<string, unknown>): Promise<T> {
+    const response = await this.fetchImpl(path, {
+      method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' }, body: JSON.stringify(body),
+    })
+    const payload = await response.json().catch(() => undefined) as { error?: { message?: string } } | undefined
+    if (!response.ok) throw new Error(payload?.error?.message ?? `操作失败（HTTP ${response.status}）`)
     return payload as T
   }
 }

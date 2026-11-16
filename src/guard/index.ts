@@ -26,6 +26,7 @@ export interface GuardOptions {
   fetchImpl?: typeof fetch
   pluginForge?: boolean
   readSession?: () => EaisRuntimeSession | undefined
+  onPluginRemoved?: (packageName: string) => void
 }
 
 interface EaisSettings {
@@ -33,6 +34,7 @@ interface EaisSettings {
   installationId?: string
   deviceName?: string
   guardState?: GuardState
+  pluginSources?: Record<string, string>
 }
 
 interface Credential {
@@ -50,6 +52,7 @@ export interface GuardContext {
   }
   settingsController?: SettingsController
   commands?: { register(definition: unknown): unknown }
+  pluginManager?: { removeBundle(name: string): Promise<{ application?: string }> }
   get?<T = unknown>(name: string): T | undefined
   on?(event: string, listener: (...args: any[]) => unknown): unknown
 }
@@ -65,7 +68,7 @@ interface ReportResult {
   lease_until?: string
   report_interval_seconds?: number
   mandatory_missing?: string[]
-  recalls?: Array<{ recall_id?: string; package_name?: string; reason?: string; action?: string }>
+  recalls?: Array<{ recall_id?: string; plugin_no?: string; package_name?: string; reason?: string; action?: string }>
   findings?: string[]
 }
 
@@ -118,6 +121,15 @@ class Guard {
     await this.restore()
     await policy
     await this.report()
+  }
+
+  forgeStatus(sessionID: string): { active: boolean, expiresAt?: string, notice?: string } {
+    return this.forge?.status(sessionID) ?? { active: false }
+  }
+
+  async forgeControl(sessionID: string, action: 'extend' | 'end' | 'prompt', text = ''): Promise<void> {
+    if (!this.forge) throw new Error('插件创作尚未开放')
+    await this.forge.control(sessionID, action, text)
   }
 
   stop(): void {
@@ -196,6 +208,7 @@ class Guard {
         this.log('mandatory packages missing', result.mandatory_missing)
       }
       await this.persist()
+      await this.cleanupRecalls(result.recalls ?? [])
       this.schedule(intervalSeconds * 1000)
     } catch (error) {
       this.attempts++
@@ -207,6 +220,32 @@ class Guard {
       this.log('software report failed', this.state.reason)
       this.schedule(Math.min(RETRY_BASE_MS * 2 ** Math.min(this.attempts - 1, 5), RETRY_MAX_MS))
     }
+  }
+
+  private async cleanupRecalls(recalls: NonNullable<ReportResult['recalls']>): Promise<void> {
+    for (const recall of recalls) {
+      const packageName = recall.package_name ?? ''
+      if (!packageName || packageName === SELF_PACKAGE || recall.action !== 'uninstall') continue
+      try {
+        const result = await this.ctx.pluginManager?.removeBundle(packageName)
+        if (result?.application === 'failed') throw new Error('插件删除失败')
+        this.config.onPluginRemoved?.(packageName)
+        if (recall.plugin_no) await this.forgetSource(recall.plugin_no)
+      } catch (error) {
+        this.log('plugin recall cleanup failed', error instanceof Error ? error.message : String(error))
+      }
+    }
+  }
+
+  private async forgetSource(pluginNo: string): Promise<void> {
+    const controller = this.settingsController()
+    if (!controller?.get) return
+    const settings = await this.readSettings()
+    if (!settings.pluginSources?.[pluginNo]) return
+    const sources = { ...settings.pluginSources }
+    delete sources[pluginNo]
+    const current = await controller.get<Record<string, unknown>>(SETTINGS_NAMESPACE)
+    await controller.update(SETTINGS_NAMESPACE, { ...(current ?? {}), pluginSources: sources }, undefined)
   }
 
   private manifest(): PackageManifest[] {
@@ -305,6 +344,8 @@ class Guard {
 
 export interface GuardHandle {
   ready: Promise<void>
+  forgeStatus(sessionID: string): { active: boolean, expiresAt?: string, notice?: string }
+  forgeControl(sessionID: string, action: 'extend' | 'end' | 'prompt', text?: string): Promise<void>
   stop(): Promise<void>
 }
 
@@ -317,6 +358,8 @@ export function startGuard(ctx: GuardContext, config: GuardOptions = {}): GuardH
   })
   return {
     ready,
+    forgeStatus: sessionID => guard.forgeStatus(sessionID),
+    forgeControl: (sessionID, action, text) => guard.forgeControl(sessionID, action, text),
     stop: async () => guard.stop(),
   }
 }

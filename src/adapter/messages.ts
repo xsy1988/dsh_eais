@@ -1,5 +1,6 @@
 import { EaisError } from '../contracts.js'
 import type { ContentBlock, RequestMessage, ToolCallId } from '../port.js'
+import type { AttachmentResolver } from '../attachments.js'
 
 export interface OpenAIToolCall {
   id: string
@@ -16,15 +17,21 @@ export interface OpenAIMessage {
   reasoning_content?: string
   tool_calls?: OpenAIToolCall[]
   tool_call_id?: string
+  attachments?: { id: string }[]
 }
 
 /**
- * L1 tool history is forwarded as OpenAI `tool_calls` / tool results. Images,
- * files, and tool additions/removals are still refused with `E_MALFORMED`
- * instead of being dropped or forwarded as partial input. A tool result is
+ * L1 tool history is forwarded as OpenAI `tool_calls` / tool results. Images and
+ * files returned by tools become metadata-only text so replaying a tool result
+ * cannot poison the session. Tool additions/removals are refused. A tool result is
  * accepted only when it answers a tool call that appeared earlier.
  */
-export function toOpenAIMessages(messages: readonly RequestMessage[], system?: string): OpenAIMessage[] {
+export function toOpenAIMessages(
+  messages: readonly RequestMessage[],
+  system?: string,
+  attachments?: AttachmentResolver,
+  sessionId?: string,
+): OpenAIMessage[] {
   const output: OpenAIMessage[] = []
   if (system) output.push({ role: 'system', content: system })
   const knownCalls = new Set<string>()
@@ -38,11 +45,10 @@ export function toOpenAIMessages(messages: readonly RequestMessage[], system?: s
       if (!callId || !knownCalls.has(callId)) {
         throw new EaisError('E_MALFORMED', '工具结果必须对应既有的工具调用历史')
       }
-      ensureTextOnly(message.content, false)
       output.push({
         role: 'tool',
         tool_call_id: callId,
-        content: plainText(message.content),
+        content: toolText(message.content),
       })
       continue
     }
@@ -62,13 +68,40 @@ export function toOpenAIMessages(messages: readonly RequestMessage[], system?: s
       })
       continue
     }
-    ensureTextOnly(message.content, false)
+    if (message.role === 'user' && attachments) ensureUserContent(message.content)
+    else ensureTextOnly(message.content, false)
+    const resolved = message.role === 'user' && attachments
+      ? resolveAttachments(message.content, attachments, sessionId)
+      : { content: plainText(message.content), references: [] }
     output.push({
       role: message.role === 'user' ? 'user' : 'system',
-      content: plainText(message.content),
+      content: resolved.content,
+      ...(resolved.references.length ? { attachments: resolved.references.map(id => ({ id })) } : {}),
     })
   }
   return output
+}
+
+function toolText(blocks: readonly ContentBlock[]): string {
+  const output: string[] = []
+  for (const block of blocks) {
+    switch (block.type) {
+      case 'text':
+        output.push(block.text)
+        break
+      case 'reasoning':
+        break
+      case 'image':
+        output.push(`[工具返回图片：${block.attachment.mediaType}，${block.attachment.width}×${block.attachment.height} px]`)
+        break
+      case 'file':
+        output.push(`[工具返回文件：${block.attachment.name}，${block.attachment.bytes} bytes]`)
+        break
+      default:
+        throw new EaisError('E_MALFORMED', '工具结果包含不支持的内容类型')
+    }
+  }
+  return output.join('')
 }
 
 function ensureTextOnly(blocks: readonly ContentBlock[], assistant: boolean): void {
@@ -91,6 +124,36 @@ function ensureTextOnly(blocks: readonly ContentBlock[], assistant: boolean): vo
         throw new EaisError('E_MALFORMED', 'L0 遇到未知的消息内容类型')
     }
   }
+}
+
+function ensureUserContent(blocks: readonly ContentBlock[]): void {
+  for (const block of blocks) {
+    if (!['text', 'image', 'file'].includes(block.type)) {
+      throw new EaisError('E_MALFORMED', '用户消息包含不支持的内容类型')
+    }
+  }
+}
+
+function resolveAttachments(
+  blocks: readonly ContentBlock[],
+  resolver: AttachmentResolver,
+  sessionId: string | undefined,
+): { content: string, references: string[] } {
+  const content: string[] = []
+  const references: string[] = []
+  for (const block of blocks) {
+    if (block.type === 'image' || block.type === 'file') {
+      const id = resolver.resolveAttachment(sessionId, String(block.attachment.attachmentId))
+      if (!id) throw new EaisError('E_MALFORMED', '附件尚未完成 EAIS 登记或当前会话无权使用')
+      references.push(id)
+      continue
+    }
+    if (block.type !== 'text') continue
+    const id = resolver.resolvePlaceholder(sessionId, block.text)
+    if (id) references.push(id)
+    else content.push(block.text)
+  }
+  return { content: content.join(''), references }
 }
 
 function openAIToolCalls(blocks: readonly ContentBlock[]): OpenAIToolCall[] {

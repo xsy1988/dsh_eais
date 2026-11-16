@@ -15,7 +15,7 @@ description: 在企业模式的插件创作会话中，引导员工使用受校�
 4. 在一次文件生成中完成完整功能。根据 `sample` 调整动作参数、字段映射、文案和展示，不要先安装静态版再反复加层。写大文件时分段，但最终必须完整；每轮修改后运行 `node --check` 和 `templates/verify.mjs`。
 5. 数据访问硬规则：只用 `ctx.eaisData.call`；禁止 `ctx.get('eaisData')`、浏览器直连 edge、读取员工卡或凭据、`pluginCtx.name`、`fiber.name`、自定义身份请求头。
 6. 界面硬规则：根节点拥有 `height:100%; min-height:0; overflow:auto`；使用 DSH 原生 token；有 loading、empty、error 和渲染错误边界；刷新忽略旧响应；`delivery=digest` 明确提示，不能渲染成空白。
-7. 严格按 `eais-plugin-check` 执行 `verify → plugin_check → 写返回 manifest → verify → install_bundle → 停止`。安装是最后一个文件操作后的动作，不得每加一层安装一次。
+7. 严格按 `eais-plugin-check` 执行 `verify → plugin_check 预检 → 假数据预览与命名确认 → finalize 改写正式名 → verify → plugin_submit → 写返回 manifest → verify → install_bundle → 停止`。预检不占号，未经员工确认不得提交；安装只在完整功能通过后执行一次。
 8. 安装成功后停止修改，请员工按 `eais-plugin-review` 验收。若员工要求修改，升级版本并完整重签；不得在已签名目录里悄悄改文件。交付时给 3–5 个具体修改选项，不问“还要改什么”。
 
 任何校验失败都先修复源码，不得通过关闭校验、绕过 guard 或直接改运行库来交付。

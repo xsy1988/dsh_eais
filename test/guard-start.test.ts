@@ -60,3 +60,35 @@ test('guard reports the merged package and releases its listeners on stop', asyn
 
   assert.deepEqual(disposals, ['agent/created', 'agent/disposed', 'tools/change'])
 })
+
+test('guard removes recalled employee plugins and clears local references', async () => {
+  const root = fixture()
+  const removed: string[] = []
+  const forgotten: string[] = []
+  let saved: any = { pluginSources: { 'PN-2026-0001': '/tmp/demo' } }
+  const fetchImpl = (async (input: string | URL | Request) => {
+    if (String(input).endsWith('/software/report')) return new Response(JSON.stringify({
+      lease_until: '2099-01-01T00:00:00Z', report_interval_seconds: 3600,
+      recalls: [{ plugin_no: 'PN-2026-0001', package_name: '@eais/e1001.demo', action: 'uninstall' }],
+    }), { status: 200 })
+    return new Response('{}', { status: 200 })
+  }) as typeof fetch
+  const guard = startGuard({
+    credentials: { resolve: () => 'token' },
+    settingsController: {
+      get: async () => saved,
+      update: async (_namespace, value) => { saved = value },
+    },
+    pluginManager: { removeBundle: async name => { removed.push(name); return { application: 'applied' } } },
+    on: () => () => undefined,
+  }, { packageRoot: root, include: ['lib'], fetchImpl, onPluginRemoved: name => forgotten.push(name) })
+  try {
+    await guard.ready
+    assert.deepEqual(removed, ['@eais/e1001.demo'])
+    assert.deepEqual(forgotten, ['@eais/e1001.demo'])
+    assert.equal(saved.pluginSources['PN-2026-0001'], undefined)
+  } finally {
+    await guard.stop()
+    rmSync(root, { recursive: true, force: true })
+  }
+})

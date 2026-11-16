@@ -1,6 +1,6 @@
 {
   "name": "@corp/dsh-eais",
-  "version": "0.4.1",
+  "version": "0.6.0",
   "private": true,
   "displayName": "企业模式",
   "description": "开启EAIS，允许使用企业模型，并可对企业内部数据进行读写操作",
@@ -48,12 +48,15 @@
     "lint": "tsc -p tsconfig.json --noEmit",
     "test": "rm -rf .test-build && tsc -p tsconfig.test.json && node --test --test-force-exit .test-build/test/*.test.js; status=$?; rm -rf .test-build; exit $status",
     "test:composition": "../DSH_pre/dsh/node_modules/.bin/vitest run --root . --config integration/vitest.config.ts",
+    "test:upgrade": "node scripts/plugin-upgrade-regression.mjs",
     "clean": "rm -rf lib .test-build"
   },
   "peerDependencies": {
     "@deepseek-ai/dsh-api-remotes": "0.2.1-rc.3",
     "@deepseek-ai/dsh-client-connection": "0.2.1-rc.3",
     "@deepseek-ai/dsh-client-locale": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-client-ui-layout": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-plugin-manager": "0.2.1-rc.3",
     "@deepseek-ai/dsh-client-ui-conversation": "0.2.1-rc.3",
     "@deepseek-ai/dsh-client-ui-settings": "0.2.1-rc.3",
     "@deepseek-ai/dsh-client-ui-sidebar-right": "0.2.1-rc.3",

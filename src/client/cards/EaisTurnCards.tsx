@@ -6,11 +6,15 @@ import { ConfirmCard } from './ConfirmCard.js'
 import { ResultCard } from './ResultCard.js'
 import { CardPlacement } from './anchor.js'
 import { selectTurnCard, type TurnCardEntry } from './select.js'
+import { PluginTurnCard, selectPluginCard } from '../PluginCards.js'
+import type { ClientContext } from '../../port.js'
 
 type SnapshotHook = (selector: (snapshot: any) => unknown) => unknown
 
 export interface EaisTurnCardsProps {
   props?: unknown
+  ctx?: ClientContext
+  fetchImpl?: typeof fetch
   api?: CardApi
   openResource?: OpenResource
   useChat?: SnapshotHook
@@ -23,7 +27,7 @@ export function EaisTurnCards({ useChat, ...rest }: EaisTurnCardsProps) {
   return <TurnCard useChat={useChat} {...rest} />
 }
 
-function TurnCard({ props, api, openResource, useChat }: EaisTurnCardsProps & { useChat: SnapshotHook }) {
+function TurnCard({ props, ctx, fetchImpl, api, openResource, useChat }: EaisTurnCardsProps & { useChat: SnapshotHook }) {
   const record = (props ?? {}) as Record<string, any>
   const turn = record.turn?.turn as number | undefined
   const data = (turn === undefined
@@ -37,6 +41,13 @@ function TurnCard({ props, api, openResource, useChat }: EaisTurnCardsProps & { 
     toolName: entry.root?.name ?? '',
     text: contentText(entry.root?.content),
   }))
+  const pluginCard = selectPluginCard(entries)
+  if (pluginCard && ctx) {
+    return createElement(CardPlacement, {
+      turn, cardKey: `plugin:${pluginCard.kind}`,
+      children: createElement(PluginTurnCard, { card: pluginCard, ctx, props, openResource, fetchImpl }),
+    })
+  }
   const card = selectTurnCard(entries)
   if (!card) return null
   const node: ReactNode = card.kind === 'draft'

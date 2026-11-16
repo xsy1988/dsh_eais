@@ -666,8 +666,12 @@ test('rc.2 slots registry receives the settings and card contributions', async (
   } as unknown as ClientContext
 
   const registration = await registerClient(ctx)
-  assert.equal(registrations.length, 4)
+  assert.equal(registrations.length, 8)
   const names = registrations.map((entry) => entry.options.name)
+  assert.ok(names.includes('conversation.session.header.actions'))
+  assert.ok(names.includes('conversation.input.dock'))
+  assert.ok(names.includes('main'))
+  assert.ok(names.includes('sidebar.panellist'))
   assert.ok(names.includes('settings.section'))
   assert.equal(names.filter((name) => name === 'tool.call.toolview').length, 0)
   assert.ok(names.includes('conversation.chat.turnTail'))

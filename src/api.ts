@@ -1,6 +1,7 @@
 import {
   EAIS_API_VERSION,
   EaisError,
+  type EaisAttachmentCapability,
   type EaisLoginResponse,
   type EaisMe,
   type EaisModel,
@@ -151,6 +152,9 @@ export function parseMe(value: unknown, options: ParseMeOptions = {}): EaisMe {
   const ui = value.ui === undefined || value.ui === null
     ? undefined
     : parseUi(value.ui, origins)
+  const attachments = value.attachments === undefined || value.attachments === null
+    ? undefined
+    : parseAttachments(value.attachments)
 
   return {
     apiVersion: EAIS_API_VERSION,
@@ -162,6 +166,22 @@ export function parseMe(value: unknown, options: ParseMeOptions = {}): EaisMe {
     },
     ...(mcp ? { mcp } : {}),
     ...(ui ? { ui } : {}),
+    ...(attachments ? { attachments } : {}),
+  }
+}
+
+function parseAttachments(value: unknown): EaisAttachmentCapability {
+  if (!isRecord(value) || value.enabled !== true || !Array.isArray(value.types) ||
+    value.types.some(item => typeof item !== 'string')) {
+    throw new EaisError('E_API_RESPONSE', 'EAIS 附件能力声明无效')
+  }
+  return {
+    enabled: true,
+    types: value.types,
+    maxFileBytes: requiredNumber(value.maxFileBytes, 'attachments.maxFileBytes'),
+    maxUnits: requiredNumber(value.maxUnits, 'attachments.maxUnits'),
+    maxMessageAttachments: requiredNumber(value.maxMessageAttachments, 'attachments.maxMessageAttachments'),
+    maxSliceChars: requiredNumber(value.maxSliceChars, 'attachments.maxSliceChars'),
   }
 }
 

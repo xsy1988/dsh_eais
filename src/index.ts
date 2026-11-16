@@ -5,6 +5,7 @@ import z from '@deepseek-ai/schemastery'
 import * as mcpClient from '@deepseek-ai/dsh-mcp-client'
 import type { Config as McpClientConfig } from '@deepseek-ai/dsh-mcp-client'
 import { EaisAdapter, type EaisRuntimeSession } from './adapter/index.js'
+import { AttachmentBridge } from './attachments.js'
 import { queryEaisData, readJsonBody, writeJson, type EaisDataProxyInput } from './dataProxy.js'
 import { fetchMe, normalizeServerUrl, type FetchLike } from './api.js'
 import {
@@ -20,6 +21,7 @@ import {
   type EaisStatus,
 } from './contracts.js'
 import { startGuard } from './guard/index.js'
+import { installPluginArtifact } from './guard/artifacts.js'
 import { DEFAULT_ENTERPRISE_PRESETS, DEFAULT_ENTERPRISE_PROVIDERS, installModelGate } from './modelGate.js'
 import { disposeAll, SerialMountQueue } from './mount.js'
 import {
@@ -61,7 +63,7 @@ export interface EaisHostOptions extends EaisConfig {
 }
 
 export const name = 'eais'
-export const inject = ['llm', 'credentials', 'settingsController', 'agentDefaultModel', 'commands']
+export const inject = ['llm', 'credentials', 'settingsController', 'agentDefaultModel', 'commands', 'pluginManager']
 export const Config = z.object({
   serverUrl: z.string().default('http://127.0.0.1:18080').volatile(),
   serverUrlReadOnly: z.boolean().default(true).volatile(),
@@ -74,6 +76,7 @@ export const Config = z.object({
   mcpReconnectRequestedAt: z.string().volatile(),
   guardState: z.any().volatile(),
   guardToolPolicy: z.any().volatile(),
+  pluginSources: z.any().volatile(),
   enforceModelMode: z.boolean().default(true),
   enterprisePresets: z.array(z.string()).default(['eais-chat']),
   enterpriseProviders: z.array(z.string()).default(['eais']),
@@ -99,6 +102,10 @@ export interface EaisHostHandle extends Disposable {
   session(): EaisRuntimeSession | undefined
   registrationReady(): Promise<void>
   queryData(packageName: string, input: EaisDataProxyInput): Promise<{ status: number; body: unknown }>
+  publishPlugin(pluginNo: string, successorStaffNo: string): Promise<{ status: number; body: unknown }>
+  installPlugin(pluginNo: string, version: string): Promise<{ status: number; body: unknown }>
+  pluginRequest(path: string, method: string, body?: unknown): Promise<{ status: number; body: unknown }>
+  forgetPlugin(packageName: string): void
 }
 
 class EaisHost {
@@ -119,12 +126,15 @@ class EaisHost {
   private resolveRegistration?: () => void
   private registrationSettled = false
   private readonly pluginNumbers = new Map<string, string>()
+  private readonly attachments: AttachmentBridge
+  private disposeAttachments?: () => void
 
   constructor(
     private readonly ctx: HostContext,
     private readonly options: EaisHostOptions,
   ) {
     this.registrationPromise = new Promise((resolve) => { this.resolveRegistration = resolve })
+    this.attachments = new AttachmentBridge(ctx, () => this.current?.session, options.fetchImpl ?? fetch)
   }
 
   registrationReady(): Promise<void> {
@@ -138,6 +148,7 @@ class EaisHost {
   }
 
   async initialize(): Promise<void> {
+    this.disposeAttachments = this.attachments.install()
     const settings = await readSettings(settingsControllerOf(this.ctx))
     this.lastLogoutRequest = settings.logoutRequestedAt
     this.lastReconnectRequest = settings.mcpReconnectRequestedAt
@@ -208,6 +219,10 @@ class EaisHost {
     return this.current?.session
   }
 
+  forgetPlugin(packageName: string): void {
+    this.pluginNumbers.delete(packageName)
+  }
+
   async queryData(packageName: string, input: EaisDataProxyInput): Promise<{ status: number; body: unknown }> {
     const current = this.current
     if (!current?.session.token) {
@@ -228,6 +243,51 @@ class EaisHost {
       return { status: result.status, body: result.body }
     } catch (error) {
       return { status: 503, body: { error: { code: 'E_UNAVAILABLE', message: failure(error).message } } }
+    }
+  }
+
+  async publishPlugin(pluginNo: string, successorStaffNo: string): Promise<{ status: number; body: unknown }> {
+    const current = this.current
+    if (!current?.session.token) return { status: 401, body: { error: { message: '请先登录 EAIS' } } }
+    try {
+      const response = await (this.options.fetchImpl ?? fetch)(`${current.serverUrl}/plugins/${encodeURIComponent(pluginNo)}/action`, {
+        method: 'POST', headers: { authorization: `Bearer ${current.session.token}`, 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({ action: 'publish', successor_staff_no: successorStaffNo }),
+      })
+      const body = await response.json().catch(() => ({}))
+      return { status: response.status, body }
+    } catch (error) {
+      return { status: 500, body: { error: { message: failure(error).message } } }
+    }
+  }
+
+  async installPlugin(pluginNo: string, version: string): Promise<{ status: number; body: unknown }> {
+    const current = this.current
+    if (!current?.session.token) return { status: 401, body: { error: { message: '请先登录 EAIS' } } }
+    if (!this.ctx.pluginManager) return { status: 503, body: { error: { message: '当前 DSH 版本无法安装共享插件' } } }
+    try {
+      const result = await installPluginArtifact(pluginNo, version, {
+        serverUrl: current.serverUrl, token: current.session.token, fetchImpl: this.options.fetchImpl,
+        pluginManager: this.ctx.pluginManager,
+      })
+      return { status: 200, body: result }
+    } catch (error) {
+      return { status: 500, body: { error: { message: failure(error).message } } }
+    }
+  }
+
+  async pluginRequest(path: string, method: string, body?: unknown): Promise<{ status: number; body: unknown }> {
+    const current = this.current
+    if (!current?.session.token) return { status: 401, body: { error: { message: '请先登录 EAIS' } } }
+    try {
+      const response = await (this.options.fetchImpl ?? fetch)(current.serverUrl + path, {
+        method,
+        headers: { authorization: `Bearer ${current.session.token}`, accept: 'application/json', ...(body !== undefined ? { 'content-type': 'application/json' } : {}) },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      })
+      return { status: response.status, body: await response.json().catch(() => ({})) }
+    } catch (error) {
+      return { status: 503, body: { error: { message: failure(error).message } } }
     }
   }
 
@@ -285,6 +345,7 @@ class EaisHost {
 
   async close(): Promise<void> {
     this.closed = true
+    this.disposeAttachments?.()
     this.settleRegistration()
     await this.queue.close()
     await this.clearCurrent()
@@ -355,6 +416,7 @@ class EaisHost {
         token,
         readSession: () => this.current?.session,
         fetchImpl: this.options.fetchImpl,
+        attachments: this.attachments,
       }))
       this.current = { serverUrl, session, adapter }
     }
@@ -538,6 +600,10 @@ export async function createEaisHost(ctx: HostContext, config: EaisHostOptions =
     session: () => host.session(),
     registrationReady: () => host.registrationReady(),
     queryData: (packageName, input) => host.queryData(packageName, input),
+    publishPlugin: (pluginNo, successorStaffNo) => host.publishPlugin(pluginNo, successorStaffNo),
+    installPlugin: (pluginNo, version) => host.installPlugin(pluginNo, version),
+    pluginRequest: (path, method, body) => host.pluginRequest(path, method, body),
+    forgetPlugin: packageName => host.forgetPlugin(packageName),
     dispose: async () => {
       stopLogoutWatch()
       for (const subscription of subscriptions) {
@@ -602,6 +668,90 @@ async function serveDataQuery(
   }
 }
 
+async function servePluginArtifactAction(
+  handle: EaisHostHandle,
+  connection: HostConnection,
+  req: IncomingMessage,
+  res: ServerResponse,
+  action: 'publish' | 'install',
+): Promise<void> {
+  const rejection = connection.requestRejection(req)
+  if (rejection !== undefined) { res.statusCode = rejection; res.end(); return }
+  if (req.method !== 'POST') { res.statusCode = 405; res.end(); return }
+  try {
+    const body = await readJsonBody(req, 4096) as Record<string, unknown>
+    const pluginNo = typeof body.pluginNo === 'string' ? body.pluginNo : ''
+    const version = typeof body.version === 'string' ? body.version : ''
+    const successorStaffNo = typeof body.successorStaffNo === 'string' ? body.successorStaffNo : ''
+    if (!pluginNo || (action === 'install' && !version)) {
+      writeJson(res, 400, { error: { message: '缺少插件号或版本' } })
+      return
+    }
+    const result = action === 'publish' ? await handle.publishPlugin(pluginNo, successorStaffNo) : await handle.installPlugin(pluginNo, version)
+    writeJson(res, result.status, result.body)
+  } catch (error) {
+    writeJson(res, 400, { error: { message: failure(error).message } })
+  }
+}
+
+async function servePluginApi(
+  handle: EaisHostHandle,
+  connection: HostConnection,
+  req: IncomingMessage,
+  res: ServerResponse,
+  action: 'mine' | 'events' | 'action',
+): Promise<void> {
+  const rejection = connection.requestRejection(req)
+  if (rejection !== undefined) { res.statusCode = rejection; res.end(); return }
+  let path = '/plugins/mine'
+  let method = 'GET'
+  let body: unknown
+  if (action === 'events') {
+    const pluginNo = new URL(req.url ?? '', 'http://localhost').searchParams.get('pluginNo') ?? ''
+    path = `/plugins/${encodeURIComponent(pluginNo)}/events`
+  }
+  if (action === 'action') {
+    method = 'POST'
+    const input = await readJsonBody(req, 8192) as Record<string, unknown>
+    const pluginNo = typeof input.pluginNo === 'string' ? input.pluginNo : ''
+    delete input.pluginNo
+    path = `/plugins/${encodeURIComponent(pluginNo)}/action`
+    body = input
+  }
+  const result = await handle.pluginRequest(path, method, body)
+  writeJson(res, result.status, result.body)
+}
+
+async function serveForge(
+  guard: ReturnType<typeof startGuard> | undefined,
+  connection: HostConnection,
+  req: IncomingMessage,
+  res: ServerResponse,
+  control: boolean,
+): Promise<void> {
+  const rejection = connection.requestRejection(req)
+  if (rejection !== undefined) { res.statusCode = rejection; res.end(); return }
+  if (!guard) { writeJson(res, 404, { error: { message: '插件创作尚未开放' } }); return }
+  try {
+    if (!control) {
+      const sessionID = new URL(req.url ?? '', 'http://localhost').searchParams.get('sessionId') ?? ''
+      writeJson(res, 200, guard.forgeStatus(sessionID))
+      return
+    }
+    const body = await readJsonBody(req, 8192) as Record<string, unknown>
+    const sessionID = typeof body.sessionId === 'string' ? body.sessionId : ''
+    const action = body.action
+    if (!sessionID || (action !== 'extend' && action !== 'end' && action !== 'prompt')) {
+      writeJson(res, 400, { error: { message: '创作控制请求无效' } })
+      return
+    }
+    await guard.forgeControl(sessionID, action, typeof body.text === 'string' ? body.text : '')
+    writeJson(res, 200, guard.forgeStatus(sessionID))
+  } catch (error) {
+    writeJson(res, 400, { error: { message: failure(error).message } })
+  }
+}
+
 async function waitForRegistration(handle: EaisHostHandle): Promise<void> {
   let timedOut = false
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -633,11 +783,17 @@ export async function apply(ctx: HostContext, config: EaisHostOptions = {}): Pro
     const connection = inner.get?.<HostConnection>('connection')
     if (!webServer || !connection) return undefined
     try {
-      return webServer.register({
-        kind: 'exact',
-        path: DATA_ROUTE,
-        handler: (req, res) => serveDataQuery(handle, connection, req, res),
-      })
+      const disposers = [
+        webServer.register({ kind: 'exact', path: DATA_ROUTE, handler: (req, res) => serveDataQuery(handle, connection, req, res) }),
+        webServer.register({ kind: 'exact', path: '/eais/plugins/publish', handler: (req, res) => servePluginArtifactAction(handle, connection, req, res, 'publish') }),
+        webServer.register({ kind: 'exact', path: '/eais/plugins/install', handler: (req, res) => servePluginArtifactAction(handle, connection, req, res, 'install') }),
+        webServer.register({ kind: 'exact', path: '/eais/forge/status', handler: (req, res) => serveForge(guard, connection, req, res, false) }),
+        webServer.register({ kind: 'exact', path: '/eais/forge/control', handler: (req, res) => serveForge(guard, connection, req, res, true) }),
+        webServer.register({ kind: 'exact', path: '/eais/plugins/mine', handler: (req, res) => servePluginApi(handle, connection, req, res, 'mine') }),
+        webServer.register({ kind: 'exact', path: '/eais/plugins/events', handler: (req, res) => servePluginApi(handle, connection, req, res, 'events') }),
+        webServer.register({ kind: 'exact', path: '/eais/plugins/action', handler: (req, res) => servePluginApi(handle, connection, req, res, 'action') }),
+      ]
+      return () => { for (const dispose of disposers) dispose() }
     } catch (error) {
       console.warn('[eais] data route registration failed', error instanceof Error ? error.message : String(error))
       return undefined
@@ -663,6 +819,7 @@ export async function apply(ctx: HostContext, config: EaisHostOptions = {}): Pro
         fetchImpl: config.fetchImpl,
         pluginForge: config.pluginForge,
         readSession: () => handle.session(),
+        onPluginRemoved: handle.forgetPlugin,
       })
     } catch (error) {
       console.warn('[eais] guard failed to start', error instanceof Error ? error.message : String(error))

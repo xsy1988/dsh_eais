@@ -8,7 +8,7 @@ const INCLUDED = ['lib', 'index.js', 'locale', 'icon.svg']
 const ALWAYS_INCLUDED = ['package.json', 'cordis.patch.yml']
 const REQUIRED_FILES = [
   'package.json', 'cordis.patch.yml', 'lib/index.js', 'lib/client.js',
-  'locale/zh.json', 'locale/en.json', 'icon.svg',
+  'locale/zh.json', 'locale/en.json', 'icon.svg', 'preview.html',
 ]
 
 function collectFiles(root, entry, files) {
@@ -103,6 +103,10 @@ export function verifyPlugin(target) {
   if (/__[A-Z][A-Z_]*__/.test(client) || /__[A-Z][A-Z_]*__/.test(readFileSync(resolve(root, 'package.json'), 'utf8'))) {
     errors.push('模板占位符尚未替换；请使用 scaffold.mjs 生成插件')
   }
+  const preview = readFileSync(resolve(root, 'preview.html'), 'utf8')
+  if (!preview.includes('数据是假的，样子是真的')) errors.push('预览必须明确标注假数据')
+  if (/\b(?:fetch|XMLHttpRequest)\s*\(|https?:\/\//i.test(preview)) errors.push('预览禁止网络访问')
+  if (/__[A-Z][A-Z_]*__/.test(preview)) errors.push('预览模板占位符尚未替换')
   checkSyntax(root, 'lib/client.js', errors)
   checkSyntax(root, 'lib/index.js', errors)
 
@@ -121,7 +125,7 @@ export function verifyPlugin(target) {
     signatureCurrent = signed.packageName === pkg.name && signed.version === pkg.version
     if (signed.packageName !== pkg.name) errors.push('签名清单与包名不一致；不要复用其他插件的签名')
     if (signatureCurrent && !sameDigest(signed.contentHash, manifest.content_hash)) {
-      errors.push('签名后插件内容已变化；升级 package.json version，重新 verify 和 plugin_check')
+      errors.push('签名后插件内容已变化；升级 package.json version，重新 verify 和 plugin_submit')
     }
     if (signatureCurrent && signed.dependencyTreeDigest && !sameDigest(signed.dependencyTreeDigest, manifest.dependency_tree_digest)) {
       errors.push('依赖摘要与签名清单不一致；升级版本并重新签名')
@@ -134,9 +138,9 @@ export function verifyPlugin(target) {
   return {
     valid: errors.length === 0,
     errors,
-    warnings: signatureStale ? ['版本已升级，旧签名仅作历史记录；必须重新 plugin_check，不能直接安装'] : [],
+    warnings: signatureStale ? ['版本已升级，旧签名仅作历史记录；必须重新 plugin_submit，不能直接安装'] : [],
     manifest,
-    next: errors.length > 0 ? '修复后重新运行 verify；不要安装' : signatureCurrent ? '运行 plugin_manager install_bundle；安装后停止，不再修改文件' : '把 manifest 传给 plugin_check，并将返回 manifest 原样写入 .eais-plugin.json',
+    next: errors.length > 0 ? '修复后重新运行 verify；不要安装' : signatureCurrent ? '运行 plugin_manager install_bundle；安装后停止，不再修改文件' : '把 manifest 传给 plugin_submit，并将返回 manifest 原样写入 .eais-plugin.json',
   }
 }
 

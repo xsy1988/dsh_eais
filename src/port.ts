@@ -1,6 +1,7 @@
 import type {
   AdapterRegistrationHandle as DshAdapterRegistrationHandle,
   LlmAdapter as DshLlmAdapter,
+  ContentBlock,
 } from '@deepseek-ai/dsh-llm'
 import {
   EAIS_SETTINGS_KEY,
@@ -111,6 +112,7 @@ export interface HostContext {
   settingsController?: SettingsController
   llm: {
     registerAdapter(providers: string[], adapter: DshLlmAdapter): DshAdapterRegistrationHandle
+    fileRequestText?(ref: Extract<ContentBlock, { type: 'file' }>['attachment']): string
   }
   agentDefaultModel?: {
     currentSelection?(): { provider?: string; model?: string } | undefined
@@ -122,6 +124,10 @@ export interface HostContext {
   }
   get?<T = unknown>(name: string): T | undefined
   plugin(plugin: unknown, config: unknown): unknown
+  pluginManager?: {
+    installBundle(spec: string): Promise<{ application?: string, error?: { diagnostic?: string } }>
+    removeBundle(name: string): Promise<{ application?: string }>
+  }
   inject?(services: string[], callback: (ctx: HostContext) => unknown): unknown
   on(event: string, listener: (...args: unknown[]) => void): unknown
 }
@@ -139,6 +145,9 @@ export interface ClientContext {
   slots?: {
     register(options: { name: string; [key: string]: unknown }, component: unknown): unknown
     inject?(name: string, register: () => unknown): unknown
+  }
+  layout?: {
+    selectPanel(panelId: string): void
   }
   /** rc.3 right sidebar navigation controller. */
   sidebarRight?: {
@@ -220,4 +229,20 @@ export async function writeSettings(
   }
   const current = await readSettings(controller).catch(() => ({}))
   unwrapRemoteResult(await controller.update(EAIS_SETTINGS_KEY, { ...current, ...value }, undefined))
+}
+
+export async function writeSettingsWithRetry(
+  controller: SettingsController | undefined,
+  value: EaisSettings,
+): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await writeSettings(controller, value)
+      return
+    } catch (error) {
+      const nested = error instanceof Error && error.message.includes('HMR transactions cannot be nested')
+      if (!nested || attempt >= 4) throw error
+      await new Promise(resolve => setTimeout(resolve, 20 * (attempt + 1)))
+    }
+  }
 }

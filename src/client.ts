@@ -25,8 +25,9 @@ import { registerEaisData } from './client/data.js'
 import { EaisPane, EaisPaneTitle } from './client/cards/EaisPane.js'
 import { EaisTurnCards } from './client/cards/EaisTurnCards.js'
 import { parseAddress } from './client/cards/parse.js'
-import { PluginApi } from './client/plugins/api.js'
+import { PluginApi, PluginArtifactApi } from './client/plugins/api.js'
 import { PluginCenter } from './client/plugins/PluginCenter.js'
+import { ForgeStatus } from './client/ForgeStatus.js'
 
 export interface ClientOptions extends EaisConfig {
   pluginForge?: boolean
@@ -38,7 +39,7 @@ export interface ClientRegistration extends Disposable {
   failures: Partial<Record<UiCapability | 'settings', EaisFailure>>
 }
 
-export const inject = ['slots', 'remote', 'remote.credentials', 'remote.settings', 'sidebarRight', 'sidebarRightTabs']
+export const inject = ['slots', 'remote', 'remote.credentials', 'remote.settings', 'sidebarRight', 'sidebarRightTabs', 'layout']
 
 /**
  * L0 registers the login/settings surface only. Cards, panels, and buttons
@@ -60,6 +61,7 @@ export async function registerClient(ctx: ClientContext, options: ClientOptions 
   const disposables: Disposable[] = []
   const failures: ClientRegistration['failures'] = {}
   await registerExecutionUI(ctx, resolvedOptions, disposables, failures)
+  await registerForgeUI(ctx, resolvedOptions.fetchImpl, disposables, failures)
   try {
     let registration: unknown
     if (ctx.slots?.inject) {
@@ -86,20 +88,25 @@ export async function registerClient(ctx: ClientContext, options: ClientOptions 
     failures.settings = failure(error, 'E_UI_REGISTER')
   }
 
-  if (resolvedOptions.pluginForge === true && ctx.slots?.register) {
+  if (ctx.slots?.register) {
     try {
       const pluginApi = new PluginApi({
         serverUrl: (resolvedOptions.serverUrl ?? 'http://127.0.0.1:18080').replace(/\/$/, ''),
         fetchImpl: resolvedOptions.fetchImpl,
-        resolveToken: async () => {
-          const resolved = await ctx.remote.credentials.resolve?.(EAIS_TOKEN_REF)
-          return typeof resolved === 'string' ? resolved : resolved?.value
-        },
       })
-      const register = () => ctx.slots!.register({ name: 'settings.section', id: 'eais-plugins', order: 60, label: '我的插件' },
-        () => createElement(PluginCenter, { api: pluginApi }))
-      const registration = await (ctx.slots.inject ? ctx.slots.inject('settings.section', register) : register())
-      disposables.push(registrationDisposable(registration))
+      const pluginArtifactApi = new PluginArtifactApi(resolvedOptions.fetchImpl)
+      const openPlugin = (plugin: { panelId: string }) => {
+        if (!ctx.layout?.selectPanel) throw new Error('当前 DSH 版本无法打开插件主区')
+        ctx.layout.selectPanel(plugin.panelId)
+      }
+      for (const [name, definition, component] of [
+        ['main', { name: 'main', key: 'eais-plugins' }, () => createElement(PluginCenter, { api: pluginApi, artifacts: pluginArtifactApi, openPlugin })],
+        ['sidebar.panellist', { name: 'sidebar.panellist', id: 'eais-plugins', order: 60, label: '我的插件' }, () => createElement('span', { 'aria-hidden': true }, '插')],
+      ] as const) {
+        const register = () => ctx.slots!.register(definition, component)
+        const registration = await (ctx.slots.inject ? ctx.slots.inject(name, register) : register())
+        disposables.push(registrationDisposable(registration))
+      }
     } catch (error) {
       failures.settings = failure(error, 'E_UI_REGISTER')
     }
@@ -121,6 +128,27 @@ export async function registerClient(ctx: ClientContext, options: ClientOptions 
     dispose: async () => {
       for (const disposable of [...disposables].reverse()) await disposable.dispose()
     },
+  }
+}
+
+async function registerForgeUI(
+  ctx: ClientContext,
+  fetchImpl: typeof fetch | undefined,
+  disposables: Disposable[],
+  _failures: ClientRegistration['failures'],
+): Promise<void> {
+  if (!ctx.slots?.register) return
+  for (const [name, dock] of [['conversation.session.header.actions', false], ['conversation.input.dock', true]] as const) {
+    try {
+      const register = () => ctx.slots!.register(
+        { name, id: dock ? 'eais-forge-dock' : 'eais-forge-header', order: 70 },
+        (props: unknown) => createElement(ForgeStatus, { ctx, props, dock, fetchImpl }),
+      )
+      const registration = await (ctx.slots.inject ? ctx.slots.inject(name, register) : register())
+      disposables.push(registrationDisposable(registration))
+    } catch (error) {
+      console.error('[eais] 创作状态栏注册失败', error)
+    }
   }
 }
 
@@ -167,7 +195,7 @@ async function registerExecutionUI(
       (props: unknown) => {
         const record = (props ?? {}) as Record<string, unknown>
         return createElement(EaisTurnCards as never, {
-          props: record, api, openResource, useChat: record.useChat,
+          props: record, ctx, fetchImpl: options.fetchImpl, api, openResource, useChat: record.useChat,
         })
       },
     )

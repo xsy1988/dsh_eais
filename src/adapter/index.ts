@@ -12,6 +12,8 @@ import {
 } from '../llm.js'
 import { toOpenAIMessages } from './messages.js'
 import { readOpenAIStream } from './stream.js'
+import { FORGE_GLOBAL_TOOLS, isForgeSession } from '../guard/forge-session.js'
+import type { AttachmentResolver } from '../attachments.js'
 
 /** One current employee-card session. The adapter never caches the token across calls. */
 export interface EaisRuntimeSession {
@@ -25,17 +27,20 @@ export interface EaisAdapterOptions {
   fetchImpl?: FetchLike
   /** Read the live session for every call; the host swaps it without re-registering. */
   readSession?: () => EaisRuntimeSession | undefined
+  attachments?: AttachmentResolver
 }
 
 export class EaisAdapter extends LlmAdapter {
   private readonly fetchImpl: FetchLike
   private readonly readSession?: () => EaisRuntimeSession | undefined
+  private readonly attachments?: AttachmentResolver
   private staticSession?: EaisRuntimeSession
 
   constructor(options: EaisAdapterOptions) {
     super()
     this.fetchImpl = options.fetchImpl ?? fetch
     this.readSession = options.readSession
+    this.attachments = options.attachments
     if (options.me && options.token) {
       this.staticSession = { me: options.me, token: options.token }
     }
@@ -76,9 +81,10 @@ export class EaisAdapter extends LlmAdapter {
     }
     const session = this.currentSession(true)
     this.findModel(session, options.model)
-    const messages = toOpenAIMessages(options.messages, options.system)
+    const messages = toOpenAIMessages(options.messages, options.system, this.attachments,
+      options.sessionId === undefined ? undefined : String(options.sessionId))
     // The server's /me.mcp declaration is the only L1 switch the plugin sees.
-    const tools = session.me.mcp ? openAITools(options.tools) : undefined
+    const tools = session.me.mcp ? openAITools(forgeTools(options)) : undefined
 
     const response = await this.fetchImpl(endpoint(session.me.llm.baseURL, '/chat/completions'), {
       method: 'POST',
@@ -130,7 +136,9 @@ export class EaisAdapter extends LlmAdapter {
   }
 
   private modelInfo(provider: string, model: EaisModel): LlmModelInfo {
-    return { provider, id: model.id, name: model.name, inputModalities: ['text'] }
+    const attachments = this.currentSession(false)?.me.attachments
+    const image = attachments?.enabled && attachments.types.includes('image')
+    return { provider, id: model.id, name: model.name, inputModalities: image ? ['text', 'image'] : ['text'] }
   }
 }
 
@@ -158,6 +166,16 @@ interface OpenAITool {
     description: string
     parameters: Record<string, unknown>
   }
+}
+
+function forgeTools(options: GenerateOptions): GenerateOptions['tools'] {
+  if (options.sessionId === undefined || !isForgeSession(String(options.sessionId))) return options.tools
+  const names = new Set([
+    ...FORGE_GLOBAL_TOOLS, 'plugin_manager', 'run_code',
+    'mcp__eais__scope', 'mcp__eais__capabilities', 'mcp__eais__sample', 'mcp__eais__plugin_list',
+    'mcp__eais__plugin_check', 'mcp__eais__plugin_submit', 'mcp__eais__plugin_log',
+  ])
+  return options.tools?.filter(tool => names.has(tool.name))
 }
 
 function openAITools(tools: GenerateOptions['tools']): OpenAITool[] | undefined {

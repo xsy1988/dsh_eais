@@ -48,6 +48,7 @@ export async function scaffold(options) {
   const templateRoot = resolve(dirname(fileURLToPath(import.meta.url)), options.template)
   await mkdir(target, { recursive: true })
   await cp(templateRoot, target, { recursive: true, force: false })
+  await cp(resolve(dirname(fileURLToPath(import.meta.url)), 'preview.html'), resolve(target, 'preview.html'))
   const panel = options.package.split('/').at(-1)
   await replacePlaceholders(target, {
     package: options.package,
@@ -55,6 +56,7 @@ export async function scaffold(options) {
     action: options.action,
     label: options.label,
     description: options.description,
+    template: options.template,
   })
   return { target, packageName: options.package, template: options.template, action: options.action }
 }

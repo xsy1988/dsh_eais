@@ -36,8 +36,10 @@ test('forge command mounts only the receiving agent and exits cleanly', async ()
     },
   })
   const stop = controller.start()
+  let followups = 0
   const agent = {
     session: { id: 'session-a' },
+    followup: () => { followups++ },
     ctx: { plugin: () => {
       mounted.push('session-a')
       return { dispose: () => undefined }
@@ -48,6 +50,7 @@ test('forge command mounts only the receiving agent and exits cleanly', async ()
   assert.equal(controller.isForge('session-a'), true)
   assert.equal(controller.isForge('session-child'), false)
   assert.deepEqual(mounted, ['session-a'])
+  assert.equal(followups, 0)
   await commands.get('插件创作')!({ agent } as never)
   assert.equal(controller.isForge('session-a'), false)
   assert.deepEqual(modes, ['forge', 'normal'])
@@ -118,11 +121,43 @@ test('install policy blocks ordinary execution and authorizes a signed absolute 
     name: 'plugin_manager', arguments: { action: 'install_bundle', target: root }, agent,
   }, async () => 'next') as { kind: string, reason: string }
   assert.equal(drift.kind, 'deny')
-  assert.match(drift.reason, /先运行 verify，升级 package\.json 版本，再调用 plugin_check/)
+  assert.match(drift.reason, /先运行 verify，升级 package\.json 版本，再调用 plugin_submit/)
   await writeFile(join(root, 'lib', 'index.js'), 'export function apply() {}')
   const relative = await listeners.get('tools/pre-execute')!({
     name: 'plugin_manager', arguments: { action: 'install_bundle', target: '@local/demo' }, agent,
   }, async () => 'next')
   assert.equal((relative as { kind: string }).kind, 'deny')
   await controller.exit('forge', false)
+})
+
+test('successful submit synchronizes the signed artifact from the current workspace', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'eais-submit-artifact-'))
+  await mkdir(join(root, 'lib'))
+  await mkdir(join(root, 'locale'))
+  await writeFile(join(root, 'lib', 'index.js'), 'export function apply() {}')
+  await writeFile(join(root, 'package.json'), JSON.stringify({ name: '@eais/e1001.demo', version: '0.1.0' }))
+  const computed = readManifest(root, '@eais/e1001.demo', ['lib', 'index.js', 'locale', 'icon.svg'])
+  await writeFile(join(root, '.eais-plugin.json'), JSON.stringify({
+    pluginNo: 'PN-2026-0011', ownerStaffNo: 'E1001', packageName: '@eais/e1001.demo', version: '0.1.0',
+    contentHash: computed.contentHash, signature: 'signed',
+  }))
+  const listeners = new Map<string, (...args: any[]) => unknown>()
+  let uploaded = ''
+  let body = ''
+  const controller = new ForgeSessionController({ on: () => () => undefined }, {
+    readSession: () => runtime(),
+    fetchImpl: async (input, init) => {
+      uploaded = String(input)
+      body = String(init?.body)
+      return new Response('{}', { status: 200 })
+    },
+  })
+  const policy = new InstallPolicy({ credentials: { resolve: () => 'token' }, on: (event, listener) => listeners.set(event, listener) }, controller)
+  const stop = policy.start()
+  await listeners.get('tools/post-execute')!({
+    name: 'mcp__eais__plugin_submit', arguments: { preview_path: join(root, 'preview.html') },
+  }, { isError: false }, async () => 'next')
+  assert.ok(uploaded.endsWith('/plugins/PN-2026-0011/versions/0.1.0/artifact'))
+  assert.match(body, /package\.json/)
+  stop()
 })

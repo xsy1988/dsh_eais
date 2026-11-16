@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>__LABEL__ · 预览</title>
+<style>
+:root{color-scheme:light;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;color:#1b1b19;background:#f7f7f5}*{box-sizing:border-box}body{margin:0;padding:24px}main{max-width:1000px;margin:auto;display:grid;gap:16px}header,section{background:#fff;border:1px solid #e6e4dd;border-radius:12px;padding:16px}h1{font-size:20px;margin:0 0 4px}p{margin:4px 0;color:#6d6c66}.badge{display:inline-block;background:#fdf5e6;color:#8a5a00;padding:4px 9px;border-radius:999px;font-size:12px}button,input{font:inherit;border:1px solid #d9d7d0;border-radius:8px;padding:7px 10px;background:#fff}button{cursor:pointer}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{text-align:left;padding:10px;border-bottom:1px solid #eee}th{color:#6d6c66;font-size:12px}.bars{height:220px;display:flex;align-items:end;gap:16px;padding:20px 8px 0}.bar{flex:1;background:#1f4f5a;border-radius:6px 6px 0 0;min-width:24px;position:relative}.bar span{position:absolute;bottom:-25px;left:0;right:0;text-align:center;font-size:12px}.detail{display:grid;grid-template-columns:140px 1fr;gap:12px}.detail dt{color:#6d6c66}.detail dd{margin:0}.hidden{display:none}
+</style>
+</head>
+<body data-template="__TEMPLATE__">
+<main>
+<header><span class="badge">数据是假的，样子是真的</span><h1>__LABEL__</h1><p>__DESCRIPTION__</p></header>
+<section id="list"><input id="filter" placeholder="筛选客户名称" aria-label="筛选客户名称"><table><thead><tr><th>客户名称</th><th>等级</th><th>最后联系时间</th></tr></thead><tbody id="rows"></tbody></table></section>
+<section id="trend" class="hidden"><strong>近六个月客户联系情况</strong><div class="bars"><div class="bar" style="height:35%"><span>6月</span></div><div class="bar" style="height:58%"><span>7月</span></div><div class="bar" style="height:46%"><span>8月</span></div><div class="bar" style="height:75%"><span>9月</span></div><div class="bar" style="height:66%"><span>10月</span></div><div class="bar" style="height:88%"><span>11月</span></div></div></section>
+<section id="workbench" class="hidden"><dl class="detail"><dt>客户名称</dt><dd>示例科技有限公司</dd><dt>客户等级</dt><dd>A 级</dd><dt>最后联系时间</dt><dd>2026-08-01</dd><dt>未联系天数</dt><dd>102 天</dd></dl></section>
+</main>
+<script>
+const kind=document.body.dataset.template
+for(const id of ['list','trend','workbench'])document.getElementById(id).classList.toggle('hidden',id!==kind)
+const rows=[['示例科技有限公司','A 级','2026-08-01'],['演示制造集团','A 级','2026-07-15'],['样例服务中心','B 级','2026-10-30']]
+function render(){const keyword=document.getElementById('filter').value.trim();document.getElementById('rows').innerHTML=rows.filter(row=>row[0].includes(keyword)).map(row=>`<tr>${row.map(value=>`<td>${value}</td>`).join('')}</tr>`).join('')}
+document.getElementById('filter').addEventListener('input',render)
+render()
+</script>
+</body>
+</html>

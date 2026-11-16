@@ -221,16 +221,38 @@ export class ToolPolicyController {
     const sessionID = String(agent.session?.id ?? '')
     const forging = this.forge?.isForge(sessionID) === true
     const policy = forging ? this.forgePolicies.get(sessionID) : this.policy
-    const names = this.availableNames(binding)
+    const names = this.names(binding)
+    this.availableNames(binding)
     const allowed = policy?.allowed
     const signature = JSON.stringify([allowed ?? null, names, this.reconnectMarker, forging])
     if (signature === binding.signature) return
-    binding.signature = signature
     const permitted = new Set(allowed ?? [])
     const blocked = names.filter((name) => name !== 'run_code' && !permitted.has(name))
-    binding.disposer?.()
-    binding.disposer = policy ? binding.ctx.restrict({ deny: blocked }) : undefined
-    console.info('[eais] guard tool policy applied', { allowed: permitted.size, deny: blocked.length, forge: forging })
+    try {
+      const next = policy ? this.restrictCurrent(binding.ctx, blocked) : undefined
+      const previous = binding.disposer
+      binding.disposer = next
+      previous?.()
+      binding.signature = signature
+      console.info('[eais] guard tool policy applied', { allowed: permitted.size, deny: blocked.length, forge: forging })
+    } catch (error) {
+      console.warn('[eais] 工具掩码更新失败，保留原有限制', error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  private restrictCurrent(ctx: ToolRegistry, blocked: string[]): () => void {
+    let names = blocked
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        return ctx.restrict({ deny: names })
+      } catch (error) {
+        const unknown = unknownGlobalTools(error)
+        if (unknown.length === 0) throw error
+        const removed = new Set(unknown)
+        names = names.filter((name) => !removed.has(name))
+      }
+    }
+    return ctx.restrict({ deny: names })
   }
 
   private async fetchPolicy(names: string[], token: string, sessionID = ''): Promise<ToolPolicy | undefined> {
@@ -344,4 +366,11 @@ export class ToolPolicyController {
       // Heartbeats and reconciliation reports must not weaken local restrictions.
     }
   }
+}
+
+function unknownGlobalTools(error: unknown): string[] {
+  if (!(error instanceof Error)) return []
+  const match = /unknown global tools?\s+(.+?)(?:; known global tools:|$)/.exec(error.message)
+  if (!match) return []
+  return [...(match[1] ?? '').matchAll(/"([^"]+)"/g)].map((entry) => entry[1]!)
 }
